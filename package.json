@@ -1,0 +1,39 @@
+{
+  "name": "event-sync-engine",
+  "version": "0.1.0",
+  "description": "Distributed event sourcing sync engine for browser extensions (Chrome/Firefox) using storage.sync API",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "build:test": "tsc -p tsconfig.test.json",
+    "build:extension": "npm run build && rm -rf test-extension/dist && cp -r dist test-extension/dist",
+    "watch": "tsc --watch",
+    "test": "npm run build:test && node --test dist/**/*.test.js",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "sync",
+    "event-sourcing",
+    "distributed",
+    "hlc",
+    "eventual-consistency",
+    "conflict-free",
+    "web-ext"
+  ],
+  "author": "Andrea Marchesini",
+  "license": "MPL-2.0",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
+}

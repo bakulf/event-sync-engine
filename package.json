@@ -10,7 +10,7 @@
     "build:test": "tsc -p tsconfig.test.json",
     "build:extension": "npm run build && rm -rf test-extension/dist && cp -r dist test-extension/dist",
     "watch": "tsc --watch",
-    "test": "npm run build:test && node --test dist/**/*.test.js",
+    "test": "npm run build:test && node --test --test-reporter=spec dist/**/*.test.js",
     "clean": "rm -rf dist"
   },
   "keywords": [
@@ -29,7 +29,7 @@
     "typescript": "^5.0.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "files": [
     "dist",

@@ -10,6 +10,7 @@ import { StorageAdapter, KeyChange } from './types.js'
  */
 export class WebExtStorageAdapter implements StorageAdapter {
   private api: any
+  private changeListener: ((changes: any) => void) | null = null
 
   constructor() {
     if (typeof globalThis !== 'undefined') {
@@ -51,13 +52,21 @@ export class WebExtStorageAdapter implements StorageAdapter {
   }
 
   onChange(callback: (changes: KeyChange[]) => void): void {
-    this.api.onChanged.addListener((changes: any) => {
+    this.changeListener = (changes: any) => {
       const keyChanges: KeyChange[] = Object.entries(changes).map(([key, change]: [string, any]) => ({
         key,
         oldValue: change.oldValue,
         newValue: change.newValue,
       }))
       callback(keyChanges)
-    })
+    }
+    this.api.onChanged.addListener(this.changeListener)
+  }
+
+  cleanup(): void {
+    if (this.changeListener) {
+      this.api.onChanged.removeListener(this.changeListener)
+      this.changeListener = null
+    }
   }
 }

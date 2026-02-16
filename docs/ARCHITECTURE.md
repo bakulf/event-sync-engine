@@ -72,7 +72,7 @@ Each device creates a *meta* key to describe itself. Written when the device gen
 
 #### Seen Key: `s_<UUID>`
 
-Vector clock tracking what each device has seen from other devices, with activity tracking. Written during sync, separate from meta to avoid unnecessary writes.
+Vector clock tracking what each device has seen from other devices, with activity tracking. Written during sync, **separate from meta to avoid unnecessary sync notifications**.
 
 ```json
 {
@@ -86,6 +86,19 @@ Vector clock tracking what each device has seen from other devices, with activit
 
 - `increments`: Maps remote device IDs to the last increment this device has processed from them. Does NOT include own device_id.
 - `lastActive`: Timestamp (milliseconds) of when this device last updated its activity. Updated once per day during sync to track device liveness for garbage collection of inactive devices.
+
+**Design Rationale: Why separate from `m_*`?**
+
+The `s_*` key is intentionally separate from `m_*` to prevent sync notification loops:
+- `m_*` changes → signals other devices: "I have new events, sync with me"
+- `s_*` changes → internal bookkeeping, does NOT trigger sync on other devices
+
+If `s_*` data were stored in `m_*`, every sync would trigger `m_*` changes, which would notify all other devices to sync, creating an infinite loop of sync notifications. By keeping `s_*` separate, devices can update their vector clocks and activity timestamps without broadcasting unnecessary sync notifications to the network.
+
+This separation means:
+- `m_*` is modified ONLY when generating new events (incrementing `last_increment`)
+- `s_*` can be updated freely during sync without causing cascading sync operations
+- Activity tracking (`lastActive`) updates don't spam the network with sync triggers
 
 #### Event Keys: `e_<UUID>_<X>`
 

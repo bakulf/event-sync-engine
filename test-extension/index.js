@@ -3,11 +3,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { SyncEngine, WebExtStorageAdapter } from './dist/index.js'
+import { loadScenario, getScenarioList, getScenario } from './scenarios.js'
 
 const storage = typeof browser !== 'undefined' ? browser.storage : chrome.storage
 
 let syncEngine = null
 let currentDeviceId = null
+let currentScenarioId = null
 
 async function getState() {
   try {
@@ -314,7 +316,9 @@ async function clearAll() {
   await storage.local.clear()
   console.log('[clearAll] All data cleared.')
 
-  // Reset local state
+  if (syncEngine) {
+    syncEngine.stop()
+  }
   syncEngine = null
   currentDeviceId = null
 
@@ -378,7 +382,162 @@ async function setDeviceId() {
   }
 }
 
+function populateScenarios() {
+  const select = document.getElementById('scenarioSelect')
+  const scenarios = getScenarioList()
+
+  scenarios.forEach(scenario => {
+    const option = document.createElement('option')
+    option.value = scenario.id
+    option.textContent = scenario.name
+    select.appendChild(option)
+  })
+
+  select.addEventListener('change', () => {
+    const selectedId = select.value
+    const scenario = scenarios.find(s => s.id === selectedId)
+    const descEl = document.getElementById('scenarioDescription')
+
+    if (scenario) {
+      descEl.textContent = scenario.description
+    } else {
+      descEl.textContent = ''
+    }
+  })
+}
+
+async function handleLoadScenario() {
+  const select = document.getElementById('scenarioSelect')
+  const scenarioId = select.value
+
+  if (!scenarioId) {
+    console.warn('[loadScenario] No scenario selected')
+    return
+  }
+
+  if (!confirm(`Load scenario "${select.options[select.selectedIndex].text}"?\n\nThis will clear all existing sync data!`)) {
+    return
+  }
+
+  console.log(`[loadScenario] Loading scenario: ${scenarioId}`)
+
+  try {
+    if (syncEngine) {
+      console.log('[loadScenario] Stopping previous sync engine')
+      syncEngine.stop()
+    }
+    syncEngine = null
+    currentDeviceId = null
+
+    await storage.sync.clear()
+    await storage.local.clear()
+
+    const result = await loadScenario(scenarioId)
+    currentScenarioId = scenarioId
+
+    if (!result || !result.deviceId) {
+      throw new Error(`Scenario "${scenarioId}" must return a device ID`)
+    }
+
+    const { deviceId: suggestedDeviceId, localState } = result
+
+    if (localState) {
+      console.log('[loadScenario] Setting up local state for device')
+      await storage.local.set(localState)
+    }
+
+    await render()
+    await loadDeviceId()
+
+    document.getElementById('validationResult').style.display = 'none'
+
+    console.log(`[loadScenario] Auto-setting device ID: ${suggestedDeviceId}`)
+    await storage.local.set({ deviceId: suggestedDeviceId })
+    currentDeviceId = suggestedDeviceId
+
+    document.getElementById('currentDeviceId').textContent = suggestedDeviceId
+    const deviceIdShortEl = document.getElementById('deviceId')
+    if (deviceIdShortEl) {
+      deviceIdShortEl.textContent = suggestedDeviceId.substring(0, 8) + '...'
+    }
+
+    await initEngine(suggestedDeviceId)
+
+    // Merge localState into appState after bootstrap
+    if (localState) {
+      const currentState = await getState()
+      await setState({ ...currentState, ...localState })
+      console.log('[loadScenario] Merged localState into appState')
+    }
+
+    console.log('[loadScenario] Engine initialized, calling sync...')
+    const syncResult = await syncEngine.sync()
+    console.log('[loadScenario] Sync completed:', syncResult)
+    await render()
+    console.log('[loadScenario] Render completed, calling validate...')
+    await handleValidate()
+  } catch (err) {
+    console.error('[loadScenario] Error loading scenario:', err)
+    showValidationResult(`✗ Scenario failed: ${err.message}`, 'error')
+
+    if (syncEngine) {
+      syncEngine.stop()
+    }
+    syncEngine = null
+    currentDeviceId = null
+    await render()
+    await loadDeviceId()
+  }
+}
+
+async function handleValidate() {
+  if (!currentScenarioId) {
+    showValidationResult('No scenario loaded', 'error')
+    return
+  }
+
+  const scenario = getScenario(currentScenarioId)
+  if (!scenario || !scenario.validate) {
+    showValidationResult('Scenario has no validation function', 'warning')
+    return
+  }
+
+  try {
+    const state = await getState()
+    console.log('[Validate] Current state:', JSON.stringify(state, null, 2))
+    console.log('[Validate] Todo count:', Object.keys(state.todos || {}).length)
+    await scenario.validate(state)
+    showValidationResult('✓ Validation passed!', 'success')
+    console.log('[Validate] Scenario validation passed')
+  } catch (err) {
+    showValidationResult(`✗ Validation failed: ${err.message}`, 'error')
+    console.error('[Validate] Scenario validation failed:', err)
+  }
+}
+
+function showValidationResult(message, type) {
+  const resultEl = document.getElementById('validationResult')
+  resultEl.textContent = message
+  resultEl.style.display = 'block'
+
+  if (type === 'success') {
+    resultEl.style.background = '#d4edda'
+    resultEl.style.color = '#155724'
+    resultEl.style.border = '1px solid #c3e6cb'
+  } else if (type === 'error') {
+    resultEl.style.background = '#f8d7da'
+    resultEl.style.color = '#721c24'
+    resultEl.style.border = '1px solid #f5c6cb'
+  } else if (type === 'warning') {
+    resultEl.style.background = '#fff3cd'
+    resultEl.style.color = '#856404'
+    resultEl.style.border = '1px solid #ffeaa7'
+  }
+}
+
 async function init() {
+  populateScenarios()
+
   const deviceId = await getDeviceId()
   if (deviceId) {
     currentDeviceId = deviceId
@@ -402,6 +561,9 @@ document.addEventListener('DOMContentLoaded', () => {
     await render()
   })
   document.getElementById('clearBtn').addEventListener('click', clearAll)
+  document.getElementById('loadScenarioBtn').addEventListener('click', async () => {
+    await handleLoadScenario()
+  })
 
   init().then(async () => {
     await render()

@@ -61,6 +61,10 @@ export class MemoryStorage implements StorageAdapter {
     this.listeners.push(callback)
   }
 
+  cleanup(): void {
+    this.listeners = []
+  }
+
   /**
    * Utility method for testing: clear all data
    */

@@ -58,6 +58,7 @@ export interface StorageAdapter {
   remove(keys: string[]): Promise<void>
   getAll(pattern: string): Promise<Record<string, any>>
   onChange(callback: (changes: KeyChange[]) => void): void
+  cleanup(): void
 }
 
 /**

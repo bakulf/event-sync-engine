@@ -52,10 +52,20 @@
       margin-bottom: 8px;
       cursor: pointer;
     }
-    input {
+    input, select {
       padding: 8px;
       margin-right: 8px;
       flex: 1;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    select {
+      background: white;
+      cursor: pointer;
+    }
+    select:disabled {
+      background: #f5f5f5;
+      cursor: not-allowed;
     }
     .todo-list {
       border: 1px solid #ccc;
@@ -196,6 +206,16 @@
           <strong>Current:</strong> <span id="currentDeviceId" style="font-family: monospace;">Not configured</span>
         </div>
       </div>
+
+      <h3>Test Scenarios</h3>
+      <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+        <select id="scenarioSelect" style="flex: 1; padding: 8px;">
+          <option value="">Select a scenario...</option>
+        </select>
+        <button id="loadScenarioBtn">Load Scenario</button>
+      </div>
+      <div id="scenarioDescription" style="font-size: 12px; color: #666; margin-bottom: 8px; min-height: 20px;"></div>
+      <div id="validationResult" style="margin-bottom: 16px; padding: 8px; border-radius: 4px; font-size: 12px; display: none;"></div>
 
       <h3>Controls</h3>
       <button id="syncBtn">🔄 Manual Sync</button>

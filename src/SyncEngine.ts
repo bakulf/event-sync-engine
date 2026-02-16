@@ -94,6 +94,25 @@ export class SyncEngine<TState = any, TEventData = any> {
   }
 
   /**
+   * Storage set with automatic GC retry on quota errors
+   */
+  private async setWithGCRetry(items: Record<string, any>): Promise<void> {
+    try {
+      await this.storage.set(items)
+    } catch (err: any) {
+      if (err.message?.includes('Quota') || err.message?.includes('quota')) {
+        this.log('[SyncEngine] Storage write failed: quota exceeded, running GC...')
+        await this.performGC()
+        this.log('[SyncEngine] Retrying write after GC...')
+        await this.storage.set(items)
+        this.log('[SyncEngine] Write succeeded after GC')
+      } else {
+        throw err
+      }
+    }
+  }
+
+  /**
    * Execute operation with exclusive lock
    */
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -157,6 +176,15 @@ export class SyncEngine<TState = any, TEventData = any> {
   }
 
   /**
+   * Stop the sync engine and clean up resources
+   * Removes storage change listeners
+   */
+  stop(): void {
+    this.log('[SyncEngine] Stopping engine and cleaning up listeners')
+    this.storage.cleanup()
+  }
+
+  /**
    * First device ever - create initial sync network
    * Creates only meta (m_X) and baseline (b_X), no events yet
    */
@@ -180,7 +208,7 @@ export class SyncEngine<TState = any, TEventData = any> {
     }
     this.lastActivityUpdate = now
 
-    await this.storage.set({
+    await this.setWithGCRetry({
       [`m_${this.deviceId}`]: meta,
       [`b_${this.deviceId}`]: baseline,
       [`s_${this.deviceId}`]: seenVector,
@@ -269,7 +297,7 @@ export class SyncEngine<TState = any, TEventData = any> {
       items[`b_${this.deviceId}`] = ourBaseline
     }
 
-    await this.storage.set(items)
+    await this.setWithGCRetry(items)
 
     this.log(`[SyncEngine] Bootstrapped with ${allEvents.length} events`)
   }
@@ -342,7 +370,7 @@ export class SyncEngine<TState = any, TEventData = any> {
       }
       itemsToWrite[`m_${this.deviceId}`] = meta
 
-      await this.storage.set(itemsToWrite)
+      await this.setWithGCRetry(itemsToWrite)
 
       if (this.deviceState.events_since_baseline_update >= this.config.baselineThreshold) {
         await this.updateBaseline()
@@ -421,7 +449,7 @@ export class SyncEngine<TState = any, TEventData = any> {
           lastActive: now,
         }
 
-        await this.storage.set({
+        await this.setWithGCRetry({
           [`s_${this.deviceId}`]: seenVector,
         })
       }
@@ -530,11 +558,10 @@ export class SyncEngine<TState = any, TEventData = any> {
       state: await this.baselineHandler(),
     }
 
-    await this.storage.set({
+    await this.setWithGCRetry({
       [`b_${this.deviceId}`]: baseline,
     })
     this.deviceState.events_since_baseline_update = 0
-
     this.log('[SyncEngine] Baseline updated')
   }
 

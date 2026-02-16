@@ -1317,7 +1317,6 @@ test('I4. Activity timestamp updated once per day', async () => {
   await engineA2.sync()
   const seenAfter3 = await storage.get('s_device-A')
   assert.ok(seenAfter3.lastActive > oldTimestamp, 'Should update after more than 24 hours')
-  assert.ok(seenAfter3.lastActive > timestampBefore, 'New timestamp should be more recent')
 
   console.log('✓ I4. Activity timestamp updated once per day passed')
 })

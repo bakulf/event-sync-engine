@@ -446,7 +446,7 @@ export class SyncEngine<TState = any, TEventData = any> {
 
         const seenVector: SeenVector = {
           increments: this.knownIncrements,
-          lastActive: now,
+          lastActive: this.lastActivityUpdate,
         }
 
         await this.setWithGCRetry({

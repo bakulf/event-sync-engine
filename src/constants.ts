@@ -23,3 +23,15 @@ export const DEFAULT_GC_FREQUENCY = 10
  * @default 7168
  */
 export const MAX_SHARD_SIZE = 7 * 1024
+
+/**
+ * Timeout for inactive devices in milliseconds
+ * @default 5184000000 (60 days)
+ */
+export const DEFAULT_INACTIVE_DEVICE_TIMEOUT = 60 * 24 * 60 * 60 * 1000
+
+/**
+ * Enable automatic removal of inactive devices during GC
+ * @default false
+ */
+export const DEFAULT_REMOVE_INACTIVE_DEVICES = false

@@ -72,16 +72,20 @@ Each device creates a *meta* key to describe itself. Written when the device gen
 
 #### Seen Key: `s_<UUID>`
 
-Vector clock tracking what each device has seen from other devices. Written during sync, separate from meta to avoid unnecessary writes.
+Vector clock tracking what each device has seen from other devices, with activity tracking. Written during sync, separate from meta to avoid unnecessary writes.
 
 ```json
 {
-  "uuid-device-B": 50,
-  "uuid-device-C": 30
+  "increments": {
+    "uuid-device-B": 50,
+    "uuid-device-C": 30
+  },
+  "lastActive": 1707649200000
 }
 ```
 
-Maps remote device IDs to the last increment this device has processed from them. Does NOT include own device_id.
+- `increments`: Maps remote device IDs to the last increment this device has processed from them. Does NOT include own device_id.
+- `lastActive`: Timestamp (milliseconds) of when this device last updated its activity. Updated once per day during sync to track device liveness for garbage collection of inactive devices.
 
 #### Event Keys: `e_<UUID>_<X>`
 
@@ -143,7 +147,7 @@ Snapshot of device state with metadata about which events from each device are i
 
 #### Known Increments: `known_increments`
 
-Kept in memory and persisted to `s_<UUID>` in storage.sync.
+Kept in memory and persisted to `s_<UUID>.increments` in storage.sync.
 
 ```json
 {
@@ -152,7 +156,7 @@ Kept in memory and persisted to `s_<UUID>` in storage.sync.
 }
 ```
 
-Vector clock tracking the last processed increment from each remote device. This map stores the highest increment we have seen and applied from each device during previous sync operations. During the next sync, we process only new events (events with increment greater than the value stored in this map for that device). Does NOT include own device_id. Restored from `s_<UUID>` on initialization.
+Vector clock tracking the last processed increment from each remote device. This map stores the highest increment we have seen and applied from each device during previous sync operations. During the next sync, we process only new events (events with increment greater than the value stored in this map for that device). Does NOT include own device_id. Restored from `s_<UUID>.increments` on initialization.
 
 #### Device State: `device_state`
 
@@ -194,8 +198,8 @@ See the [References](#references) section for detailed information on this algor
 
 When this event is triggered, based on the changed key, we decide the next step:
 - `m_*` changes → device generated new events (incremented `last_increment`) → sync to fetch those events
-- `e_*` changes → device wrote events → **no sync** (they are updated in sync with `m_*` keys).
-- `s_*` changes → device updated tracking → **no sync** (avoids loops, doesn't indicate new events)
+- `e_*` changes → device wrote events → **no sync** (they are updated in sync with `m_*` keys)
+- `s_*` changes → device updated vector clock or activity timestamp → **no sync** (avoids loops, doesn't indicate new events)
 - `b_*` changes → baseline updated → **no sync** (not necessary, baseline is optimization only)
 
 **Important:** When `m_*` changes, it indicates the remote device has a higher `last_increment`, meaning new events exist. The sync process will compare the new `last_increment` with local `known_increments` to determine which events to fetch.
@@ -222,7 +226,10 @@ When this event is triggered, based on the changed key, we decide the next step:
 4. Apply events in order
 5. Update `known_increments[device_id] = meta.last_increment` for each device
 6. Update local HLC from remote events
-7. Persist `known_increments` to storage.sync as `s_<own_UUID>`
+7. Check if more than 24 hours have passed since last activity update
+8. If events were applied OR 24 hours have passed:
+   - Update `lastActive` timestamp to current time
+   - Persist `s_<own_UUID>` to storage.sync with updated `increments` and `lastActive`
 
 **Note on missing events:** Process only events that are available. If some events are missing (due to GC, corruption, or other reasons), simply skip them. Update `known_increments` based on `meta.last_increment`, not on the highest event actually seen. This ensures continuous progress even when gaps exist.
 
@@ -376,9 +383,9 @@ Update: known_increments = {device_B: 55, device_C: 35}
 
 After processing events from device X, update:
 ```
-s_<own_UUID>[device_X] = m_X.last_increment
+s_<own_UUID>.increments[device_X] = m_X.last_increment
 ```
-Write updated `s_<own_UUID>` to storage.sync.
+Write updated `s_<own_UUID>` to storage.sync (includes both `increments` map and `lastActive` timestamp).
 
 **Garbage Collection (periodic, e.g., every 10 syncs):**
 
@@ -403,6 +410,52 @@ Each device performs GC to clean up its own events:
 - Device A must keep events > 60 even if device A itself has moved ahead
 - Only when ALL baselines include an event can it be safely removed
 - Offline devices are automatically protected: their old baseline blocks GC of events they still need
+
+### 7. Inactive Device Removal
+
+**Goal:** Remove devices that have been inactive for an extended period to free storage quota and prevent accumulation of abandoned device data.
+
+**Configuration:**
+- `removeInactiveDevices`: Boolean flag to enable/disable the feature (default: false, opt-in)
+- `inactiveDeviceTimeout`: Timeout in milliseconds after which a device is considered inactive (default: 60 days)
+
+**Activity Tracking:**
+
+Each device updates its `s_<UUID>.lastActive` timestamp once per day during sync:
+1. Check if more than 24 hours have passed since last activity update
+2. If yes, update `lastActive` to current timestamp
+3. Write updated `s_<UUID>` to storage.sync
+
+This daily update serves as a heartbeat signal, allowing other devices to detect when a device has stopped syncing.
+
+**Removal Process (during GC, if enabled):**
+
+1. Fetch all `m_*` and `s_*` keys from storage
+2. For each remote device:
+   - Read its `s_<device_id>.lastActive` timestamp
+   - If `(now - lastActive) > inactiveDeviceTimeout`:
+     - Mark device as inactive for removal
+3. For each inactive device, remove all its keys:
+   - `m_<device_id>` (meta)
+   - `b_<device_id>` (baseline)
+   - `s_<device_id>` (seen vector)
+   - All `e_<device_id>_*` (event shards, using `meta.shards` to identify them)
+4. Remove inactive device IDs from own `known_increments`
+5. Update own `s_<own_UUID>` with cleaned `increments` map
+
+**Device Rejoining:**
+
+If a device returns after being removed:
+1. Device finds no `m_<own_UUID>` during initialization
+2. Device performs bootstrap as a new device (same flow as [First Sync / Bootstrap](#2-first-sync--bootstrap))
+3. Device fetches baseline and events from remaining devices
+4. Device creates new `m_*`, `b_*`, `s_*` keys with initial state
+
+**Safety:**
+- Opt-in by default to prevent accidental data loss
+- Long timeout (60 days default) to avoid removing temporarily offline devices
+- Device can rejoin seamlessly by bootstrapping from remaining devices
+- No data loss for other devices - only the inactive device's own sync metadata is removed
 
 ---
 

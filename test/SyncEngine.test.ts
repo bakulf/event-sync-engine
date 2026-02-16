@@ -532,7 +532,7 @@ test('C2. Baseline includes correct devices', async () => {
       { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'a2', name: 'A2' } } },
     ],
     'b_device-A': { includes: {}, state: { items: {} } },
-    's_device-A': { 'device-B': 5, 'device-C': 3 }, // A has seen B up to 5, C up to 3
+    's_device-A': { increments: { 'device-B': 5, 'device-C': 3 }, lastActive: Date.now() },
     'm_device-B': { last_increment: 5, shards: [0] },
     'm_device-C': { last_increment: 3, shards: [0] },
   })
@@ -1266,4 +1266,231 @@ test('I2. GC respects incomplete baselines', async () => {
   assert.strictEqual(shard0[4].increment, 10, 'Should keep event 10')
 
   console.log('✓ I2. GC respects incomplete baselines passed')
+})
+
+test('I3. SeenVector format with activity tracking', async () => {
+  const storage = new MemoryStorage()
+
+  const stateA: TestState = { items: {} }
+  const { engine: engineA } = createTrackedEngine('device-A', storage, stateA)
+  await engineA.initialize()
+
+  const seenA = await storage.get('s_device-A')
+  assert.ok(seenA, 'SeenVector should exist')
+  assert.ok(seenA.increments, 'Should have increments field')
+  assert.ok(typeof seenA.lastActive === 'number', 'Should have lastActive timestamp')
+  assert.ok(seenA.lastActive > 0, 'lastActive should be set')
+
+  console.log('✓ I3. SeenVector format with activity tracking passed')
+})
+
+test('I4. Activity timestamp updated once per day', async () => {
+  const storage = new MemoryStorage()
+
+  const stateA: TestState = { items: {} }
+  const { engine: engineA } = createTrackedEngine('device-A', storage, stateA)
+  await engineA.initialize()
+
+  const seenBefore = await storage.get('s_device-A')
+  const timestampBefore = seenBefore.lastActive
+
+  await engineA.sync()
+  const seenAfter1 = await storage.get('s_device-A')
+  assert.strictEqual(seenAfter1.lastActive, timestampBefore, 'Should not update within same day')
+
+  await engineA.sync()
+  const seenAfter2 = await storage.get('s_device-A')
+  assert.strictEqual(seenAfter2.lastActive, timestampBefore, 'Should still not update within same day')
+
+  const oldTimestamp = Date.now() - (25 * 60 * 60 * 1000)
+  await storage.set({
+    's_device-A': {
+      increments: seenAfter2.increments,
+      lastActive: oldTimestamp,
+    }
+  })
+
+  const stateA2: TestState = { items: {} }
+  const { engine: engineA2 } = createTrackedEngine('device-A', storage, stateA2)
+  await engineA2.initialize()
+
+  await engineA2.sync()
+  const seenAfter3 = await storage.get('s_device-A')
+  assert.ok(seenAfter3.lastActive > oldTimestamp, 'Should update after more than 24 hours')
+  assert.ok(seenAfter3.lastActive > timestampBefore, 'New timestamp should be more recent')
+
+  console.log('✓ I4. Activity timestamp updated once per day passed')
+})
+
+test('I5. Remove inactive devices during GC', async () => {
+  const storage = new MemoryStorage()
+
+  const oldTimestamp = Date.now() - (70 * 24 * 60 * 60 * 1000)
+
+  await storage.set({
+    'm_device-A': { last_increment: 5, shards: [0] },
+    'e_device-A_0': [
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
+      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'a2', name: 'A2' } } },
+      { increment: 3, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: { id: 'a3', name: 'A3' } } },
+      { increment: 4, hlc_time: 1003, hlc_counter: 0, op: { type: 'create', data: { id: 'a4', name: 'A4' } } },
+      { increment: 5, hlc_time: 1004, hlc_counter: 0, op: { type: 'create', data: { id: 'a5', name: 'A5' } } },
+    ],
+    'b_device-A': {
+      includes: { 'device-A': 5 },
+      state: { items: { a1: { name: 'A1' }, a2: { name: 'A2' }, a3: { name: 'A3' }, a4: { name: 'A4' }, a5: { name: 'A5' } } },
+    },
+    's_device-A': {
+      increments: { 'device-A': 5 },
+      lastActive: oldTimestamp,
+    },
+    'm_device-B': { last_increment: 2, shards: [0] },
+    'e_device-B_0': [
+      { increment: 1, hlc_time: 1005, hlc_counter: 0, op: { type: 'create', data: { id: 'b1', name: 'B1' } } },
+      { increment: 2, hlc_time: 1006, hlc_counter: 0, op: { type: 'create', data: { id: 'b2', name: 'B2' } } },
+    ],
+    'b_device-B': {
+      includes: { 'device-B': 2 },
+      state: { items: { b1: { name: 'B1' }, b2: { name: 'B2' } } },
+    },
+    's_device-B': {
+      increments: { 'device-B': 2 },
+      lastActive: oldTimestamp,
+    },
+  })
+
+  const stateC: TestState = { items: {} }
+  const { engine: engineC } = createTrackedEngine('device-C', storage, stateC, {
+    gcFrequency: 1,
+    removeInactiveDevices: true,
+    inactiveDeviceTimeout: 60 * 24 * 60 * 60 * 1000,
+    debug: true,
+  })
+  await engineC.initialize()
+
+  await engineC.sync()
+
+  const metaA = await storage.get('m_device-A')
+  const metaB = await storage.get('m_device-B')
+  assert.strictEqual(metaA, undefined, 'Device A should be removed')
+  assert.strictEqual(metaB, undefined, 'Device B should be removed')
+
+  const baselineA = await storage.get('b_device-A')
+  const baselineB = await storage.get('b_device-B')
+  assert.strictEqual(baselineA, undefined, 'Device A baseline should be removed')
+  assert.strictEqual(baselineB, undefined, 'Device B baseline should be removed')
+
+  const seenA = await storage.get('s_device-A')
+  const seenB = await storage.get('s_device-B')
+  assert.strictEqual(seenA, undefined, 'Device A seen should be removed')
+  assert.strictEqual(seenB, undefined, 'Device B seen should be removed')
+
+  const eventsA = await storage.get('e_device-A_0')
+  const eventsB = await storage.get('e_device-B_0')
+  assert.strictEqual(eventsA, undefined, 'Device A events should be removed')
+  assert.strictEqual(eventsB, undefined, 'Device B events should be removed')
+
+  console.log('✓ I5. Remove inactive devices during GC passed')
+})
+
+test('I6. Do not remove active devices', async () => {
+  const storage = new MemoryStorage()
+
+  const recentTimestamp = Date.now() - (30 * 24 * 60 * 60 * 1000)
+
+  await storage.set({
+    'm_device-A': { last_increment: 2, shards: [0] },
+    'e_device-A_0': [
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
+      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'a2', name: 'A2' } } },
+    ],
+    'b_device-A': {
+      includes: { 'device-A': 2 },
+      state: { items: { a1: { name: 'A1' }, a2: { name: 'A2' } } },
+    },
+    's_device-A': {
+      increments: { 'device-A': 2 },
+      lastActive: recentTimestamp,
+    },
+  })
+
+  const stateB: TestState = { items: {} }
+  const { engine: engineB } = createTrackedEngine('device-B', storage, stateB, {
+    gcFrequency: 1,
+    removeInactiveDevices: true,
+    inactiveDeviceTimeout: 60 * 24 * 60 * 60 * 1000,
+  })
+  await engineB.initialize()
+
+  await engineB.sync()
+
+  const metaA = await storage.get('m_device-A')
+  assert.ok(metaA, 'Device A should NOT be removed (still active)')
+
+  console.log('✓ I6. Do not remove active devices passed')
+})
+
+test('I7. Removed device comes back online and bootstraps', async () => {
+  const storage = new MemoryStorage()
+
+  const stateA: TestState = { items: {} }
+  const { engine: engineA, tracking: trackingA } = createTrackedEngine('device-A', storage, stateA)
+  await engineA.initialize()
+
+  stateA.items['a1'] = { name: 'A1' }
+  await engineA.recordEvent('create', { id: 'a1', name: 'A1' })
+
+  const metaBefore = await storage.get('m_device-A')
+  assert.ok(metaBefore, 'Device A meta should exist before removal')
+
+  await storage.remove(['m_device-A', 'b_device-A', 's_device-A', 'e_device-A_0'])
+
+  const metaAfter = await storage.get('m_device-A')
+  assert.strictEqual(metaAfter, undefined, 'Device A meta should be removed')
+
+  const stateA2: TestState = { items: {} }
+  const { engine: engineA2, tracking: trackingA2 } = createTrackedEngine('device-A', storage, stateA2)
+  await engineA2.initialize()
+
+  const metaRestored = await storage.get('m_device-A')
+  assert.ok(metaRestored, 'Device A should bootstrap as new device')
+  assert.strictEqual(metaRestored.last_increment, 0, 'Should start with increment 0')
+
+  assert.ok(trackingA2.callOrder.includes('createBaseline'), 'Should call createBaseline when bootstrapping')
+
+  console.log('✓ I7. Removed device comes back online and bootstraps passed')
+})
+
+test('I8. Inactive device removal disabled by default', async () => {
+  const storage = new MemoryStorage()
+
+  const oldTimestamp = Date.now() - (70 * 24 * 60 * 60 * 1000)
+
+  await storage.set({
+    'm_device-A': { last_increment: 1, shards: [0] },
+    'e_device-A_0': [
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
+    ],
+    'b_device-A': {
+      includes: { 'device-A': 1 },
+      state: { items: { a1: { name: 'A1' } } },
+    },
+    's_device-A': {
+      increments: { 'device-A': 1 },
+      lastActive: oldTimestamp,
+    },
+  })
+
+  const stateB: TestState = { items: {} }
+  const { engine: engineB } = createTrackedEngine('device-B', storage, stateB, {
+    gcFrequency: 1,
+  })
+  await engineB.initialize()
+
+  await engineB.sync()
+
+  const metaA = await storage.get('m_device-A')
+  assert.ok(metaA, 'Device A should NOT be removed (feature disabled by default)')
+
+  console.log('✓ I8. Inactive device removal disabled by default passed')
 })

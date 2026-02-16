@@ -7,6 +7,8 @@ import { ShardManager } from './ShardManager.js'
 import {
   DEFAULT_BASELINE_THRESHOLD,
   DEFAULT_GC_FREQUENCY,
+  DEFAULT_INACTIVE_DEVICE_TIMEOUT,
+  DEFAULT_REMOVE_INACTIVE_DEVICES,
 } from './constants.js'
 import type {
   StorageAdapter,
@@ -37,6 +39,7 @@ export class SyncEngine<TState = any, TEventData = any> {
   private shardManager: ShardManager
   private deviceState: DeviceState
   private knownIncrements: KnownIncrements = {}
+  private lastActivityUpdate: number = 0
 
   private eventHandler: EventHandler<TEventData> | null = null
   private baselineHandler: BaselineHandler<TState> | null = null
@@ -51,6 +54,8 @@ export class SyncEngine<TState = any, TEventData = any> {
       baselineThreshold: config.baselineThreshold ?? DEFAULT_BASELINE_THRESHOLD,
       gcFrequency: config.gcFrequency ?? DEFAULT_GC_FREQUENCY,
       debug: config.debug ?? false,
+      removeInactiveDevices: config.removeInactiveDevices ?? DEFAULT_REMOVE_INACTIVE_DEVICES,
+      inactiveDeviceTimeout: config.inactiveDeviceTimeout ?? DEFAULT_INACTIVE_DEVICE_TIMEOUT,
     }
 
     this.hlc = new HLC()
@@ -168,9 +173,17 @@ export class SyncEngine<TState = any, TEventData = any> {
       state: this.baselineHandler ? await this.baselineHandler() : {} as TState,
     }
 
+    const now = Date.now()
+    const seenVector: SeenVector = {
+      increments: {},
+      lastActive: now,
+    }
+    this.lastActivityUpdate = now
+
     await this.storage.set({
       [`m_${this.deviceId}`]: meta,
       [`b_${this.deviceId}`]: baseline,
+      [`s_${this.deviceId}`]: seenVector,
     })
 
     this.log('[SyncEngine] First device initialized')
@@ -236,9 +249,16 @@ export class SyncEngine<TState = any, TEventData = any> {
       shards: [0],
     }
 
+    const now = Date.now()
+    const seenVector: SeenVector = {
+      increments: this.knownIncrements,
+      lastActive: now,
+    }
+    this.lastActivityUpdate = now
+
     const items: Record<string, any> = {
       [`m_${this.deviceId}`]: ourMeta,
-      [`s_${this.deviceId}`]: this.knownIncrements,
+      [`s_${this.deviceId}`]: seenVector,
     }
 
     if (this.baselineHandler) {
@@ -268,9 +288,11 @@ export class SyncEngine<TState = any, TEventData = any> {
 
     const seen: SeenVector | undefined = await this.storage.get(`s_${this.deviceId}`)
     if (seen) {
-      this.knownIncrements = seen
+      this.knownIncrements = seen.increments
+      this.lastActivityUpdate = seen.lastActive
     } else {
       this.knownIncrements = {}
+      this.lastActivityUpdate = 0
     }
 
     this.log('[SyncEngine] Sync metadata restored')
@@ -385,9 +407,22 @@ export class SyncEngine<TState = any, TEventData = any> {
         eventsApplied++
       }
 
-      if (eventsApplied > 0) {
+      const now = Date.now()
+      const oneDayInMs = 24 * 60 * 60 * 1000
+      const shouldUpdateActivity = (now - this.lastActivityUpdate) > oneDayInMs
+
+      if (eventsApplied > 0 || shouldUpdateActivity) {
+        if (shouldUpdateActivity) {
+          this.lastActivityUpdate = now
+        }
+
+        const seenVector: SeenVector = {
+          increments: this.knownIncrements,
+          lastActive: now,
+        }
+
         await this.storage.set({
-          [`s_${this.deviceId}`]: this.knownIncrements,
+          [`s_${this.deviceId}`]: seenVector,
         })
       }
 
@@ -504,11 +539,77 @@ export class SyncEngine<TState = any, TEventData = any> {
   }
 
   /**
+   * Remove inactive devices and their data
+   */
+  private async removeInactiveDevices(): Promise<void> {
+    this.log('[SyncEngine] Checking for inactive devices...')
+
+    const allMeta = await this.storage.getAll('^m_')
+    const allSeen = await this.storage.getAll('^s_')
+
+    const now = Date.now()
+    const timeout = this.config.inactiveDeviceTimeout
+    const keysToRemove: string[] = []
+    const devicesToRemove: string[] = []
+
+    for (const [metaKey, meta] of Object.entries(allMeta)) {
+      const deviceId = metaKey.replace('m_', '')
+      if (deviceId === this.deviceId) continue
+
+      const seenKey = `s_${deviceId}`
+      const seen = allSeen[seenKey] as SeenVector | undefined
+
+      if (!seen) {
+        continue
+      }
+
+      const lastActive = seen.lastActive || 0
+      if (lastActive === 0) {
+        continue
+      }
+
+      if (now - lastActive > timeout) {
+        this.log(`[SyncEngine] Device ${deviceId} inactive for ${Math.floor((now - lastActive) / (24 * 60 * 60 * 1000))} days, removing...`)
+
+        keysToRemove.push(`m_${deviceId}`)
+        keysToRemove.push(`b_${deviceId}`)
+        keysToRemove.push(`s_${deviceId}`)
+
+        const shards = (meta as Meta).shards || [0]
+        for (const shard of shards) {
+          keysToRemove.push(`e_${deviceId}_${shard}`)
+        }
+
+        delete this.knownIncrements[deviceId]
+        devicesToRemove.push(deviceId)
+      }
+    }
+
+    if (keysToRemove.length > 0) {
+      await this.storage.remove(keysToRemove)
+
+      const seenVector: SeenVector = {
+        increments: this.knownIncrements,
+        lastActive: Date.now(),
+      }
+      await this.storage.set({
+        [`s_${this.deviceId}`]: seenVector,
+      })
+
+      this.log(`[SyncEngine] Removed ${devicesToRemove.length} inactive devices`)
+    }
+  }
+
+  /**
    * Perform garbage collection
    * Removes old events that are included in all device baselines
    */
   private async performGC(): Promise<void> {
     this.log('[SyncEngine] Starting garbage collection...')
+
+    if (this.config.removeInactiveDevices) {
+      await this.removeInactiveDevices()
+    }
 
     const allBaselines = await this.storage.getAll('^b_')
 

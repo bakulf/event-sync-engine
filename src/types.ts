@@ -42,9 +42,12 @@ export interface Baseline<TState = any> {
 }
 
 /**
- * Seen vector (s_<UUID>)
+ * Seen vector with activity tracking (s_<UUID>)
  */
-export type SeenVector = Record<string, number>  // device_id -> last_increment
+export interface SeenVector {
+  increments: Record<string, number>
+  lastActive: number
+}
 
 /**
  * Storage adapter interface
@@ -70,9 +73,11 @@ export interface KeyChange {
  * Sync engine configuration
  */
 export interface SyncConfig {
-  baselineThreshold?: number    // Events before baseline update (default: DEFAULT_BASELINE_THRESHOLD)
-  gcFrequency?: number           // Syncs between GC runs (default: DEFAULT_GC_FREQUENCY)
-  debug?: boolean                // Enable debug logging (default: false)
+  baselineThreshold?: number          // Events before baseline update (default: DEFAULT_BASELINE_THRESHOLD)
+  gcFrequency?: number                 // Syncs between GC runs (default: DEFAULT_GC_FREQUENCY)
+  debug?: boolean                      // Enable debug logging (default: false)
+  removeInactiveDevices?: boolean      // Enable inactive device removal (default: DEFAULT_REMOVE_INACTIVE_DEVICES)
+  inactiveDeviceTimeout?: number       // Milliseconds before device is inactive (default: DEFAULT_INACTIVE_DEVICE_TIMEOUT)
 }
 
 /**

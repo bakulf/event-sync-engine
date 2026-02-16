@@ -12,6 +12,7 @@ This engine enables conflict-free, eventually consistent data synchronization ac
 - **HLC Ordering**: Deterministic event ordering despite clock drift
 - **Conflict-Free**: Guaranteed eventual consistency across devices
 - **Garbage Collection**: Baseline-based automatic cleanup of old events
+- **Inactive Device Removal**: Optional automatic cleanup of devices inactive for extended periods
 - **Sharding**: Automatic event sharding to respect storage.sync 8KB limit
 - **Concurrency Protection**: Operation-level locking prevents race conditions
 - **Testable**: Built-in memory storage for testing
@@ -142,6 +143,36 @@ await engine.sync()
 1. SyncEngine detects change in storage.sync
 2. SyncEngine calls your `onApplyEvent` handler
 3. Application applies event to its state
+
+## Configuration
+
+The SyncEngine constructor accepts an optional configuration object:
+
+```typescript
+const engine = new SyncEngine<State, EventData>(deviceId, storage, {
+  baselineThreshold: 15,
+  gcFrequency: 10,
+  removeInactiveDevices: false,
+  inactiveDeviceTimeout: 60 * 24 * 60 * 60 * 1000,
+  debug: false
+})
+```
+
+**Options:**
+- `baselineThreshold`: Number of events before triggering baseline update (default: 15)
+- `gcFrequency`: Number of syncs between garbage collection runs (default: 10)
+- `removeInactiveDevices`: Enable automatic removal of inactive devices (default: false)
+- `inactiveDeviceTimeout`: Milliseconds after which a device is considered inactive (default: 60 days)
+- `debug`: Enable debug logging (default: false)
+
+### Inactive Device Removal
+
+When enabled, devices that haven't synced for the configured timeout period are automatically removed during garbage collection. This helps:
+- Free storage quota in storage.sync
+- Clean up abandoned devices
+- Prevent accumulation of stale data
+
+**Important:** Removed devices can rejoin seamlessly by bootstrapping from remaining active devices.
 
 ## Architecture
 

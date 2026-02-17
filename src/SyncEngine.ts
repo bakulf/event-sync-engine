@@ -9,6 +9,7 @@ import {
   DEFAULT_GC_FREQUENCY,
   DEFAULT_INACTIVE_DEVICE_TIMEOUT,
   DEFAULT_REMOVE_INACTIVE_DEVICES,
+  PROTOCOL_VERSION,
 } from './constants.js'
 import type {
   StorageAdapter,
@@ -90,6 +91,20 @@ export class SyncEngine<TState = any, TEventData = any> {
   private log(...args: any[]): void {
     if (this.config.debug) {
       console.log(...args)
+    }
+  }
+
+  /**
+   * Validate protocol version compatibility
+   */
+  private validateProtocolVersion(meta: Meta, deviceId: string): void {
+    const version = meta.version ?? 1
+
+    if (version < PROTOCOL_VERSION) {
+      throw new Error(
+        `Device ${deviceId} uses protocol version ${version}, ` +
+        `which is older than the minimum supported version ${PROTOCOL_VERSION}`
+      )
     }
   }
 
@@ -192,6 +207,7 @@ export class SyncEngine<TState = any, TEventData = any> {
     this.log('[SyncEngine] First device ever, initializing...')
 
     const meta: Meta = {
+      version: PROTOCOL_VERSION,
       last_increment: 0,
       shards: [0],
     }
@@ -222,6 +238,12 @@ export class SyncEngine<TState = any, TEventData = any> {
    */
   private async bootstrap(allMeta: Record<string, Meta>): Promise<void> {
     this.log('[SyncEngine] Bootstrapping from existing network...')
+
+    // Validate all remote device versions first
+    for (const [key, meta] of Object.entries(allMeta)) {
+      const deviceId = key.replace('m_', '')
+      this.validateProtocolVersion(meta, deviceId)
+    }
 
     const deviceIds = Object.keys(allMeta).map((k) => k.replace('m_', ''))
 
@@ -273,6 +295,7 @@ export class SyncEngine<TState = any, TEventData = any> {
     }
 
     const ourMeta: Meta = {
+      version: PROTOCOL_VERSION,
       last_increment: 0,
       shards: [0],
     }
@@ -308,6 +331,9 @@ export class SyncEngine<TState = any, TEventData = any> {
    */
   private async loadSyncMetadata(meta: Meta): Promise<void> {
     this.log('[SyncEngine] Loading sync metadata...')
+
+    // Validate our own Meta version
+    this.validateProtocolVersion(meta, this.deviceId)
 
     this.deviceState.last_increment = meta.last_increment
 
@@ -365,6 +391,7 @@ export class SyncEngine<TState = any, TEventData = any> {
       this.deviceState.events_since_baseline_update++
 
       const meta: Meta = {
+        version: PROTOCOL_VERSION,
         last_increment: increment,
         shards: this.shardManager.getActiveShards(),
       }
@@ -399,7 +426,9 @@ export class SyncEngine<TState = any, TEventData = any> {
 
         if (remoteDeviceId === this.deviceId) continue
 
+        // Validate version when discovering new devices
         if (!(remoteDeviceId in this.knownIncrements)) {
+          this.validateProtocolVersion(meta, remoteDeviceId)
           this.knownIncrements[remoteDeviceId] = 0
         }
 
@@ -695,6 +724,7 @@ export class SyncEngine<TState = any, TEventData = any> {
     this.deviceState.current_shard = this.shardManager.getCurrentShard()
 
     const meta: Meta = {
+      version: PROTOCOL_VERSION,
       last_increment: this.deviceState.last_increment,
       shards: remainingShards,
     }

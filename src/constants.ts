@@ -35,3 +35,9 @@ export const DEFAULT_INACTIVE_DEVICE_TIMEOUT = 60 * 24 * 60 * 60 * 1000
  * @default false
  */
 export const DEFAULT_REMOVE_INACTIVE_DEVICES = false
+
+/**
+ * Current protocol version supported by this engine
+ * @default 1
+ */
+export const PROTOCOL_VERSION = 1

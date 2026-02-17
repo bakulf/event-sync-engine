@@ -47,6 +47,7 @@ export const scenarios = {
 
       await storage.sync.set({
         [`m_${deviceId}`]: {
+          version: 1,
           last_increment: 20,
           shards: [0]
         },
@@ -108,6 +109,7 @@ export const scenarios = {
 
       await storage.sync.set({
         [`m_${deviceId}`]: {
+          version: 1,
           last_increment: 20,
           shards: [0]
         },
@@ -190,6 +192,7 @@ export const scenarios = {
         })
 
         allData[`m_${deviceId}`] = {
+          version: 1,
           last_increment: 5,
           shards: [0]
         }
@@ -274,6 +277,7 @@ export const scenarios = {
 
       await storage.sync.set({
         [`m_${deviceA}`]: {
+          version: 1,
           last_increment: 10,
           shards: [0]
         },
@@ -287,6 +291,7 @@ export const scenarios = {
           lastActive: Date.now()
         },
         [`m_${deviceB}`]: {
+          version: 1,
           last_increment: 3,
           shards: [0]
         },
@@ -382,6 +387,7 @@ export const scenarios = {
 
       await storage.sync.set({
         [`m_${deviceId}`]: {
+          version: 1,
           last_increment: 9,
           shards: [0, 1, 2]
         },
@@ -466,6 +472,7 @@ export const scenarios = {
 
       await storage.sync.set({
         [`m_${activeDevice}`]: {
+          version: 1,
           last_increment: 5,
           shards: [0]
         },
@@ -479,6 +486,7 @@ export const scenarios = {
           lastActive: Date.now()
         },
         [`m_${oldDevice1}`]: {
+          version: 1,
           last_increment: 3,
           shards: [0]
         },
@@ -492,6 +500,7 @@ export const scenarios = {
           lastActive: oldTime
         },
         [`m_${oldDevice2}`]: {
+          version: 1,
           last_increment: 3,
           shards: [0]
         },
@@ -561,6 +570,7 @@ export const scenarios = {
 
       await storage.sync.set({
         [`m_${deviceA}`]: {
+          version: 1,
           last_increment: 15,
           shards: [0]
         },
@@ -574,6 +584,7 @@ export const scenarios = {
           lastActive: Date.now()
         },
         [`m_${deviceB}`]: {
+          version: 1,
           last_increment: 8,
           shards: [0]
         },
@@ -659,17 +670,17 @@ export const scenarios = {
       })
 
       await storage.sync.set({
-        [`m_${deviceA}`]: { last_increment: 3, shards: [0] },
+        [`m_${deviceA}`]: { version: 1, last_increment: 3, shards: [0] },
         [`e_${deviceA}_0`]: eventsA,
         [`b_${deviceA}`]: { includes: { [deviceA]: 3 }, state: { todos: todosA } },
         [`s_${deviceA}`]: { increments: {}, lastActive: Date.now() },
 
-        [`m_${deviceB}`]: { last_increment: 2, shards: [0] },
+        [`m_${deviceB}`]: { version: 1, last_increment: 2, shards: [0] },
         [`e_${deviceB}_0`]: eventsB,
         [`b_${deviceB}`]: { includes: { [deviceB]: 2 }, state: { todos: todosB } },
         [`s_${deviceB}`]: { increments: {}, lastActive: Date.now() },
 
-        [`m_${deviceC}`]: { last_increment: 2, shards: [0] },
+        [`m_${deviceC}`]: { version: 1, last_increment: 2, shards: [0] },
         [`e_${deviceC}_0`]: eventsC,
         [`b_${deviceC}`]: { includes: { [deviceC]: 2 }, state: { todos: todosC } },
         [`s_${deviceC}`]: { increments: {}, lastActive: Date.now() }
@@ -718,6 +729,7 @@ export const scenarios = {
 
       await storage.sync.set({
         [`m_${deviceId}`]: {
+          version: 1,
           last_increment: 10,
           shards: [0]
         },
@@ -783,6 +795,7 @@ export const scenarios = {
           const shards = Array.from({ length: finalIncrement }, (_, i) => i)
 
           allData[`m_${deviceId}`] = {
+            version: 1,
             last_increment: finalIncrement,
             shards: shards
           }

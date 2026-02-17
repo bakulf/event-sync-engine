@@ -1493,3 +1493,105 @@ test('I8. Inactive device removal disabled by default', async () => {
 
   console.log('✓ I8. Inactive device removal disabled by default passed')
 })
+
+test('I9. Should accept devices with version newer (forward compatible)', async () => {
+  const storage = new MemoryStorage()
+
+  // Setup: Device A exists with future version
+  await storage.set({
+    'm_device-A': { version: 2, last_increment: 1, shards: [0] },
+    'e_device-A_0': [
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
+    ],
+    'b_device-A': {
+      includes: { 'device-A': 1 },
+      state: { items: { a1: { name: 'A1' } } },
+    },
+  })
+
+  // Device B bootstraps - should succeed (forward compatible)
+  const stateB: TestState = { items: {} }
+  const { engine: engineB } = createTrackedEngine('device-B', storage, stateB)
+  await engineB.initialize()
+
+  // Verify we successfully synced with the newer device
+  assert.strictEqual(Object.keys(stateB.items).length, 1, 'Should have synced 1 item')
+  assert.deepStrictEqual(stateB.items.a1, { name: 'A1' })
+
+  console.log('✓ I9. Should accept devices with version newer (forward compatible) passed')
+})
+
+test('I10. Should create Meta with current version', async () => {
+  const storage = new MemoryStorage()
+
+  // First device should create Meta with version
+  const stateA: TestState = { items: {} }
+  const { engine: engineA } = createTrackedEngine('device-A', storage, stateA)
+  await engineA.initialize()
+
+  const metaA = await storage.get('m_device-A')
+  assert.ok(metaA, 'Meta should be created')
+  assert.strictEqual(metaA.version, 1, 'Meta should have version 1')
+
+  // Record event - Meta should still have version
+  stateA.items['a1'] = { name: 'A1' }
+  await engineA.recordEvent('create', { id: 'a1', name: 'A1' })
+
+  const metaAfterEvent = await storage.get('m_device-A')
+  assert.strictEqual(metaAfterEvent.version, 1, 'Meta should still have version 1 after event')
+  assert.strictEqual(metaAfterEvent.last_increment, 1, 'Increment should be 1')
+
+  console.log('✓ I10. Should create Meta with current version passed')
+})
+
+test('I11. Should handle mixed-version device network', async () => {
+  const storage = new MemoryStorage()
+
+  // Setup: Device A without version (old device), Device C with version
+  await storage.set({
+    'm_device-A': { last_increment: 1, shards: [0] },  // No version field
+    'e_device-A_0': [
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
+    ],
+    'b_device-A': {
+      includes: { 'device-A': 1 },
+      state: { items: { a1: { name: 'A1' } } },
+    },
+    's_device-A': {
+      increments: { 'device-A': 1 },
+      lastActive: Date.now(),
+    },
+
+    'm_device-C': { version: 1, last_increment: 1, shards: [0] },  // Has version field
+    'e_device-C_0': [
+      { increment: 1, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: { id: 'c1', name: 'C1' } } },
+    ],
+    'b_device-C': {
+      includes: { 'device-C': 1 },
+      state: { items: { c1: { name: 'C1' } } },
+    },
+    's_device-C': {
+      increments: { 'device-C': 1 },
+      lastActive: Date.now(),
+    },
+  })
+
+  // Device B bootstraps from mixed network
+  const stateB: TestState = { items: {} }
+  const { engine: engineB } = createTrackedEngine('device-B', storage, stateB)
+  await engineB.initialize()
+
+  // Verify both devices are treated correctly
+  assert.strictEqual(Object.keys(stateB.items).length, 2, 'Should have synced items from both devices')
+  assert.deepStrictEqual(stateB.items.a1, { name: 'A1' }, 'Should have item from device A')
+  assert.deepStrictEqual(stateB.items.c1, { name: 'C1' }, 'Should have item from device C')
+
+  // Verify Device B has version in its Meta
+  const metaB = await storage.get('m_device-B')
+  assert.strictEqual(metaB.version, 1, 'Device B should have version 1')
+
+  // Sync should work fine
+  await engineB.sync()
+
+  console.log('✓ I11. Should handle mixed-version device network passed')
+})

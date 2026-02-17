@@ -29,6 +29,7 @@ export interface Operation<TData = any> {
  * Meta key structure (m_<UUID>)
  */
 export interface Meta {
+  version: number          // Protocol version (required for all new Meta)
   last_increment: number
   shards: number[]
 }

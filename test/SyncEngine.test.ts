@@ -6,6 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert'
 import { SyncEngine } from '../src/SyncEngine.js'
 import { MemoryStorage } from '../src/MemoryStorage.js'
+import { PROTOCOL_VERSION } from '../src/constants.js'
 import type { Event, Baseline, Meta, StorageAdapter } from '../src/types.js'
 
 interface TestState {
@@ -68,7 +69,7 @@ function createTrackedEngine(
     tracking.callOrder.push('applyEvent')
     notifyWaiters('applyEvent')
     if (event.op.type === 'create') {
-      state.items[event.op.data.id] = { name: event.op.data.name! }
+      state.items[event.op.data!.id] = { name: event.op.data!.name! }
     }
   })
 
@@ -78,10 +79,10 @@ function createTrackedEngine(
     return state
   })
 
-  engine.onApplyBaseline((newState) => {
+  engine.onApplyBaseline((receivedState) => {
     tracking.callOrder.push('applyBaseline')
     notifyWaiters('applyBaseline')
-    Object.assign(state, newState)
+    Object.assign(state, receivedState)
     return
   })
 
@@ -101,8 +102,8 @@ async function setupExistingDevice(
   shards = [0]
 ) {
   await storage.set({
-    [`m_${deviceId}`]: { last_increment: lastIncrement, shards },
-    [`b_${deviceId}`]: { includes: {}, state: { items: {} } },
+    [`m_${deviceId}`]: { version: PROTOCOL_VERSION, last_increment: lastIncrement, shards },
+    [`b_${deviceId}`]: { includes: {}, state: JSON.stringify({ items: {} }) },
   })
 }
 
@@ -143,16 +144,16 @@ test('A1. Bootstrap from baseline with multiple devices', async () => {
   await storage.set({
     'm_device-A': { last_increment: 2, shards: [0] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
-      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'a2', name: 'A2' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
+      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a2', name: 'A2' }) } },
     ],
     'b_device-A': {
       includes: { 'device-A': 2, 'device-C': 1 },
-      state: { items: { a1: { name: 'A1' }, a2: { name: 'A2' }, c1: { name: 'C1' } } },
+      state: JSON.stringify({ items: { a1: { name: 'A1' }, a2: { name: 'A2' }, c1: { name: 'C1' } } }),
     },
     'm_device-C': { last_increment: 1, shards: [0] },
     'e_device-C_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 1, op: { type: 'create', data: { id: 'c1', name: 'C1' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 1, op: { type: 'create', data: JSON.stringify({ id: 'c1', name: 'C1' }) } },
     ],
   })
 
@@ -176,20 +177,20 @@ test('A2. Bootstrap with events in multiple shards', async () => {
   await storage.set({
     'm_device-A': { last_increment: 6, shards: [0, 1, 2] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
-      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'a2', name: 'A2' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
+      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a2', name: 'A2' }) } },
     ],
     'e_device-A_1': [
-      { increment: 3, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: { id: 'a3', name: 'A3' } } },
-      { increment: 4, hlc_time: 1003, hlc_counter: 0, op: { type: 'create', data: { id: 'a4', name: 'A4' } } },
+      { increment: 3, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a3', name: 'A3' }) } },
+      { increment: 4, hlc_time: 1003, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a4', name: 'A4' }) } },
     ],
     'e_device-A_2': [
-      { increment: 5, hlc_time: 1004, hlc_counter: 0, op: { type: 'create', data: { id: 'a5', name: 'A5' } } },
-      { increment: 6, hlc_time: 1005, hlc_counter: 0, op: { type: 'create', data: { id: 'a6', name: 'A6' } } },
+      { increment: 5, hlc_time: 1004, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a5', name: 'A5' }) } },
+      { increment: 6, hlc_time: 1005, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a6', name: 'A6' }) } },
     ],
     'b_device-A': {
       includes: { 'device-A': 2 }, // Baseline includes first 2 events
-      state: { items: { a1: { name: 'A1' }, a2: { name: 'A2' } } },
+      state: JSON.stringify({ items: { a1: { name: 'A1' }, a2: { name: 'A2' } } }),
     },
   })
 
@@ -213,8 +214,8 @@ test('A3. Bootstrap without baseline available', async () => {
   await storage.set({
     'm_device-A': { last_increment: 2, shards: [0] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
-      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'a2', name: 'A2' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
+      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a2', name: 'A2' }) } },
     ],
     // No b_device-A
   })
@@ -245,12 +246,12 @@ test('A4. Bootstrap with device not in baseline', async () => {
   await storage.set({
     'm_device-A': { last_increment: 2, shards: [0] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
-      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'a2', name: 'A2' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
+      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a2', name: 'A2' }) } },
     ],
     'b_device-A': {
       includes: { 'device-A': 2 }, // Only includes device A, NOT device C
-      state: { items: { a1: { name: 'A1' }, a2: { name: 'A2' } } },
+      state: JSON.stringify({ items: { a1: { name: 'A1' }, a2: { name: 'A2' } } }),
     },
   })
 
@@ -258,9 +259,9 @@ test('A4. Bootstrap with device not in baseline', async () => {
   await storage.set({
     'm_device-C': { last_increment: 3, shards: [0] },
     'e_device-C_0': [
-      { increment: 1, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: { id: 'c1', name: 'C1' } } },
-      { increment: 2, hlc_time: 1003, hlc_counter: 0, op: { type: 'create', data: { id: 'c2', name: 'C2' } } },
-      { increment: 3, hlc_time: 1004, hlc_counter: 0, op: { type: 'create', data: { id: 'c3', name: 'C3' } } },
+      { increment: 1, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'c1', name: 'C1' }) } },
+      { increment: 2, hlc_time: 1003, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'c2', name: 'C2' }) } },
+      { increment: 3, hlc_time: 1004, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'c3', name: 'C3' }) } },
     ],
   })
 
@@ -360,19 +361,19 @@ test('B2. Sync with events from multiple devices', async () => {
   await storage.set({
     'm_device-A': { last_increment: 1, shards: [0] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
     ],
-    'b_device-A': { includes: {}, state: { items: {} } },
+    'b_device-A': { includes: {}, state: JSON.stringify({ items: {} }) },
     'm_device-B': { last_increment: 1, shards: [0] },
     'e_device-B_0': [
-      { increment: 1, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'b1', name: 'B1' } } },
+      { increment: 1, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'b1', name: 'B1' }) } },
     ],
-    'b_device-B': { includes: {}, state: { items: {} } },
+    'b_device-B': { includes: {}, state: JSON.stringify({ items: {} }) },
     'm_device-C': { last_increment: 1, shards: [0] },
     'e_device-C_0': [
-      { increment: 1, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: { id: 'c1', name: 'C1' } } },
+      { increment: 1, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'c1', name: 'C1' }) } },
     ],
-    'b_device-C': { includes: {}, state: { items: {} } },
+    'b_device-C': { includes: {}, state: JSON.stringify({ items: {} }) },
   })
 
   // Device D joins and syncs
@@ -394,15 +395,15 @@ test('B3. Sync with HLC ordering', async () => {
   await storage.set({
     'm_device-A': { last_increment: 2, shards: [0] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
-      { increment: 2, hlc_time: 1000, hlc_counter: 5, op: { type: 'create', data: { id: 'a2', name: 'A2' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
+      { increment: 2, hlc_time: 1000, hlc_counter: 5, op: { type: 'create', data: JSON.stringify({ id: 'a2', name: 'A2' }) } },
     ],
-    'b_device-A': { includes: {}, state: { items: {} } },
+    'b_device-A': { includes: {}, state: JSON.stringify({ items: {} }) },
     'm_device-B': { last_increment: 1, shards: [0] },
     'e_device-B_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 2, op: { type: 'create', data: { id: 'b1', name: 'B1' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 2, op: { type: 'create', data: JSON.stringify({ id: 'b1', name: 'B1' }) } },
     ],
-    'b_device-B': { includes: {}, state: { items: {} } },
+    'b_device-B': { includes: {}, state: JSON.stringify({ items: {} }) },
   })
 
   const stateC: TestState = { items: {} }
@@ -410,12 +411,12 @@ test('B3. Sync with HLC ordering', async () => {
   const engineC = new SyncEngine<TestState, TestEventData>('device-C', storage)
 
   engineC.onApplyEvent((event) => {
-    eventsApplied.push(event.op.data.id)
-    stateC.items[event.op.data.id] = { name: event.op.data.name! }
+    eventsApplied.push(event.op.data!.id)
+    stateC.items[event.op.data!.id] = { name: event.op.data!.name! }
   })
   engineC.onCreateBaseline(() => stateC)
-  engineC.onApplyBaseline((newState) => {
-    Object.assign(stateC, newState)
+  engineC.onApplyBaseline((receivedState) => {
+    Object.assign(stateC, receivedState)
   })
 
   await engineC.initialize()
@@ -442,7 +443,7 @@ test('B4. Multiple syncs in sequence', async () => {
   await storage.set({
     'm_device-B': { last_increment: 1, shards: [0] },
     'e_device-B_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'b1', name: 'B1' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'b1', name: 'B1' }) } },
     ],
   })
 
@@ -528,10 +529,10 @@ test('C2. Baseline includes correct devices', async () => {
   await storage.set({
     'm_device-A': { last_increment: 2, shards: [0] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
-      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'a2', name: 'A2' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
+      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a2', name: 'A2' }) } },
     ],
-    'b_device-A': { includes: {}, state: { items: {} } },
+    'b_device-A': { includes: {}, state: JSON.stringify({ items: {} }) },
     's_device-A': { increments: { 'device-B': 5, 'device-C': 3 }, lastActive: Date.now() },
     'm_device-B': { last_increment: 5, shards: [0] },
     'm_device-C': { last_increment: 3, shards: [0] },
@@ -568,15 +569,15 @@ test('C3. Bootstrap skips events included in baseline', async () => {
   await storage.set({
     'm_device-A': { last_increment: 5, shards: [0] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
-      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'a2', name: 'A2' } } },
-      { increment: 3, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: { id: 'a3', name: 'A3' } } },
-      { increment: 4, hlc_time: 1003, hlc_counter: 0, op: { type: 'create', data: { id: 'a4', name: 'A4' } } },
-      { increment: 5, hlc_time: 1004, hlc_counter: 0, op: { type: 'create', data: { id: 'a5', name: 'A5' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
+      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a2', name: 'A2' }) } },
+      { increment: 3, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a3', name: 'A3' }) } },
+      { increment: 4, hlc_time: 1003, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a4', name: 'A4' }) } },
+      { increment: 5, hlc_time: 1004, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a5', name: 'A5' }) } },
     ],
     'b_device-A': {
       includes: { 'device-A': 3 },
-      state: { items: { a1: { name: 'A1' }, a2: { name: 'A2' }, a3: { name: 'A3' } } },
+      state: JSON.stringify({ items: { a1: { name: 'A1' }, a2: { name: 'A2' }, a3: { name: 'A3' } } }),
     },
   })
 
@@ -636,14 +637,14 @@ test('D1. Read events from multiple shards', async () => {
   await storage.set({
     'm_device-A': { last_increment: 4, shards: [0, 1] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
-      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'a2', name: 'A2' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
+      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a2', name: 'A2' }) } },
     ],
     'e_device-A_1': [
-      { increment: 3, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: { id: 'a3', name: 'A3' } } },
-      { increment: 4, hlc_time: 1003, hlc_counter: 0, op: { type: 'create', data: { id: 'a4', name: 'A4' } } },
+      { increment: 3, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a3', name: 'A3' }) } },
+      { increment: 4, hlc_time: 1003, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a4', name: 'A4' }) } },
     ],
-    'b_device-A': { includes: {}, state: { items: {} } },
+    'b_device-A': { includes: {}, state: JSON.stringify({ items: {} }) },
   })
 
   const stateB: TestState = { items: {} }
@@ -690,7 +691,7 @@ test('E1. HLC update during sync', async () => {
   await storage.set({
     'm_device-B': { last_increment: 1, shards: [0] },
     'e_device-B_0': [
-      { increment: 1, hlc_time: futureTime, hlc_counter: 5, op: { type: 'create', data: { id: 'b1', name: 'B1' } } },
+      { increment: 1, hlc_time: futureTime, hlc_counter: 5, op: { type: 'create', data: JSON.stringify({ id: 'b1', name: 'B1' }) } },
     ],
   })
 
@@ -730,7 +731,7 @@ test('F0. onChange triggers sync', async () => {
   await storage.set({
     'm_device-B': { last_increment: 1, shards: [0] },
     'e_device-B_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'b1', name: 'B1' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'b1', name: 'B1' }) } },
     ],
   })
 
@@ -776,9 +777,9 @@ test('G0. Device without baselineHandler', async () => {
   await storage.set({
     'm_device-A': { last_increment: 1, shards: [0] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
     ],
-    'b_device-A': { includes: {}, state: { items: {} } },
+    'b_device-A': { includes: {}, state: JSON.stringify({ items: {} }) },
   })
 
   const stateB: TestState = { items: {} }
@@ -786,12 +787,12 @@ test('G0. Device without baselineHandler', async () => {
 
   engineB.onApplyEvent((event) => {
     if (event.op.type === 'create') {
-      stateB.items[event.op.data.id] = { name: event.op.data.name! }
+      stateB.items[event.op.data!.id] = { name: event.op.data!.name! }
     }
   })
   // No onCreateBaseline handler
-  engineB.onApplyBaseline((newState) => {
-    Object.assign(stateB, newState)
+  engineB.onApplyBaseline((receivedState) => {
+    Object.assign(stateB, receivedState)
   })
 
   await engineB.initialize()
@@ -809,12 +810,12 @@ test('G1. Events with gaps in increments', async () => {
   await storage.set({
     'm_device-A': { last_increment: 7, shards: [0] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
-      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'a2', name: 'A2' } } },
-      { increment: 5, hlc_time: 1004, hlc_counter: 0, op: { type: 'create', data: { id: 'a5', name: 'A5' } } },
-      { increment: 7, hlc_time: 1006, hlc_counter: 0, op: { type: 'create', data: { id: 'a7', name: 'A7' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
+      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a2', name: 'A2' }) } },
+      { increment: 5, hlc_time: 1004, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a5', name: 'A5' }) } },
+      { increment: 7, hlc_time: 1006, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a7', name: 'A7' }) } },
     ],
-    'b_device-A': { includes: {}, state: { items: {} } },
+    'b_device-A': { includes: {}, state: JSON.stringify({ items: {} }) },
   })
 
   const stateB: TestState = { items: {} }
@@ -840,9 +841,9 @@ test('G2. SyncResult values', async () => {
   await storage.set({
     'm_device-B': { last_increment: 3, shards: [0] },
     'e_device-B_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'b1', name: 'B1' } } },
-      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'b2', name: 'B2' } } },
-      { increment: 3, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: { id: 'b3', name: 'B3' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'b1', name: 'B1' }) } },
+      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'b2', name: 'B2' }) } },
+      { increment: 3, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'b3', name: 'B3' }) } },
     ],
   })
 
@@ -885,7 +886,7 @@ test('G4. recordEvent during sync throws', async () => {
   await storage.set({
     'm_device-B': { last_increment: 1, shards: [0] },
     'e_device-B_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'b1', name: 'B1' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'b1', name: 'B1' }) } },
     ],
   })
 
@@ -990,7 +991,7 @@ test('G8. Multiple concurrent sync throws', async () => {
   await storage.set({
     'm_device-B': { last_increment: 1, shards: [0] },
     'e_device-B_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'b1', name: 'B1' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'b1', name: 'B1' }) } },
     ],
   })
 
@@ -1027,14 +1028,14 @@ test('G9. Event exceeds maximum shard size throws', async () => {
   const { engine: engineA } = createTrackedEngine('device-A', storage, stateA)
   await engineA.initialize()
 
-  // Create event that exceeds MAX_SHARD_SIZE (7KB)
+  // Create event that exceeds MAX_KEYVALUE_SIZE (7KB)
   // 4000 chars * 2 bytes/char + JSON overhead = ~8KB+
   const tooLargeData = 'x'.repeat(4000)
 
   await assert.rejects(
     async () => await engineA.recordEvent('create', { id: '1', name: tooLargeData }),
     /Event size .* exceeds maximum shard size/,
-    'Should throw when single event exceeds MAX_SHARD_SIZE'
+    'Should throw when single event exceeds MAX_KEYVALUE_SIZE'
   )
 
   console.log('✓ G9. Event exceeds maximum shard size throws passed')
@@ -1243,7 +1244,7 @@ test('I2. GC respects incomplete baselines', async () => {
     'm_device-B': { last_increment: 0, shards: [0] },
     'b_device-B': {
       includes: { 'device-A': 5 }, // Only includes up to event 5
-      state: { items: {} }
+      state: JSON.stringify({ items: {} })
     },
   })
 
@@ -1329,15 +1330,15 @@ test('I5. Remove inactive devices during GC', async () => {
   await storage.set({
     'm_device-A': { last_increment: 5, shards: [0] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
-      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'a2', name: 'A2' } } },
-      { increment: 3, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: { id: 'a3', name: 'A3' } } },
-      { increment: 4, hlc_time: 1003, hlc_counter: 0, op: { type: 'create', data: { id: 'a4', name: 'A4' } } },
-      { increment: 5, hlc_time: 1004, hlc_counter: 0, op: { type: 'create', data: { id: 'a5', name: 'A5' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
+      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a2', name: 'A2' }) } },
+      { increment: 3, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a3', name: 'A3' }) } },
+      { increment: 4, hlc_time: 1003, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a4', name: 'A4' }) } },
+      { increment: 5, hlc_time: 1004, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a5', name: 'A5' }) } },
     ],
     'b_device-A': {
       includes: { 'device-A': 5 },
-      state: { items: { a1: { name: 'A1' }, a2: { name: 'A2' }, a3: { name: 'A3' }, a4: { name: 'A4' }, a5: { name: 'A5' } } },
+      state: JSON.stringify({ items: { a1: { name: 'A1' }, a2: { name: 'A2' }, a3: { name: 'A3' }, a4: { name: 'A4' }, a5: { name: 'A5' } } }),
     },
     's_device-A': {
       increments: { 'device-A': 5 },
@@ -1345,12 +1346,12 @@ test('I5. Remove inactive devices during GC', async () => {
     },
     'm_device-B': { last_increment: 2, shards: [0] },
     'e_device-B_0': [
-      { increment: 1, hlc_time: 1005, hlc_counter: 0, op: { type: 'create', data: { id: 'b1', name: 'B1' } } },
-      { increment: 2, hlc_time: 1006, hlc_counter: 0, op: { type: 'create', data: { id: 'b2', name: 'B2' } } },
+      { increment: 1, hlc_time: 1005, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'b1', name: 'B1' }) } },
+      { increment: 2, hlc_time: 1006, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'b2', name: 'B2' }) } },
     ],
     'b_device-B': {
       includes: { 'device-B': 2 },
-      state: { items: { b1: { name: 'B1' }, b2: { name: 'B2' } } },
+      state: JSON.stringify({ items: { b1: { name: 'B1' }, b2: { name: 'B2' } } }),
     },
     's_device-B': {
       increments: { 'device-B': 2 },
@@ -1400,12 +1401,12 @@ test('I6. Do not remove active devices', async () => {
   await storage.set({
     'm_device-A': { last_increment: 2, shards: [0] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
-      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: { id: 'a2', name: 'A2' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
+      { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a2', name: 'A2' }) } },
     ],
     'b_device-A': {
       includes: { 'device-A': 2 },
-      state: { items: { a1: { name: 'A1' }, a2: { name: 'A2' } } },
+      state: JSON.stringify({ items: { a1: { name: 'A1' }, a2: { name: 'A2' } } }),
     },
     's_device-A': {
       increments: { 'device-A': 2 },
@@ -1468,11 +1469,11 @@ test('I8. Inactive device removal disabled by default', async () => {
   await storage.set({
     'm_device-A': { last_increment: 1, shards: [0] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
     ],
     'b_device-A': {
       includes: { 'device-A': 1 },
-      state: { items: { a1: { name: 'A1' } } },
+      state: JSON.stringify({ items: { a1: { name: 'A1' } } }),
     },
     's_device-A': {
       increments: { 'device-A': 1 },
@@ -1501,11 +1502,11 @@ test('I9. Should accept devices with version newer (forward compatible)', async 
   await storage.set({
     'm_device-A': { version: 2, last_increment: 1, shards: [0] },
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
     ],
     'b_device-A': {
       includes: { 'device-A': 1 },
-      state: { items: { a1: { name: 'A1' } } },
+      state: JSON.stringify({ items: { a1: { name: 'A1' } } }),
     },
   })
 
@@ -1551,11 +1552,11 @@ test('I11. Should handle mixed-version device network', async () => {
   await storage.set({
     'm_device-A': { last_increment: 1, shards: [0] },  // No version field
     'e_device-A_0': [
-      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: { id: 'a1', name: 'A1' } } },
+      { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'a1', name: 'A1' }) } },
     ],
     'b_device-A': {
       includes: { 'device-A': 1 },
-      state: { items: { a1: { name: 'A1' } } },
+      state: JSON.stringify({ items: { a1: { name: 'A1' } } }),
     },
     's_device-A': {
       increments: { 'device-A': 1 },
@@ -1564,11 +1565,11 @@ test('I11. Should handle mixed-version device network', async () => {
 
     'm_device-C': { version: 1, last_increment: 1, shards: [0] },  // Has version field
     'e_device-C_0': [
-      { increment: 1, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: { id: 'c1', name: 'C1' } } },
+      { increment: 1, hlc_time: 1002, hlc_counter: 0, op: { type: 'create', data: JSON.stringify({ id: 'c1', name: 'C1' }) } },
     ],
     'b_device-C': {
       includes: { 'device-C': 1 },
-      state: { items: { c1: { name: 'C1' } } },
+      state: JSON.stringify({ items: { c1: { name: 'C1' } } }),
     },
     's_device-C': {
       increments: { 'device-C': 1 },
@@ -1594,4 +1595,130 @@ test('I11. Should handle mixed-version device network', async () => {
   await engineB.sync()
 
   console.log('✓ I11. Should handle mixed-version device network passed')
+})
+
+// =============================================================================
+// L. CHUNK CLEANUP
+// =============================================================================
+
+test('L0. Baseline shrinks and removes orphaned chunks', async () => {
+  const storage = new MemoryStorage()
+  let largeData = 'x'.repeat(50 * 1024) // 50KB
+
+  const engineA = new SyncEngine<string, string>('device-A', storage, {
+    debug: true,
+    baselineThreshold: 2,
+  })
+
+  engineA.onApplyEvent((event) => {
+    largeData = event.op.data!
+  })
+
+  engineA.onCreateBaseline(() => largeData)
+  engineA.onApplyBaseline((state) => {
+    largeData = state as string
+  })
+
+  await engineA.initialize()
+
+  // State is already large (50KB), record events to trigger baseline
+  await engineA.recordEvent('event1', largeData)
+  await engineA.recordEvent('event2', largeData)
+
+  // This should trigger baseline update with chunks
+  await engineA.recordEvent('event3', 'trigger')
+
+  const baseline1 = await storage.get('b_device-A')
+  assert.ok(baseline1)
+  assert.ok(baseline1.chunks! > 1, 'Baseline should have multiple chunks')
+  const oldChunks = baseline1.chunks!
+
+  // Verify all chunks exist
+  for (let i = 0; i < oldChunks; i++) {
+    const chunk = await storage.get(`b_device-A_${i}`)
+    assert.ok(chunk !== undefined, `Chunk ${i} should exist`)
+  }
+
+  // Now make state much smaller
+  largeData = 'small'
+
+  // Trigger another baseline update
+  await engineA.recordEvent('event4', 'trigger2')
+  await engineA.recordEvent('event5', 'trigger3')
+
+  const baseline2 = await storage.get('b_device-A')
+  assert.ok(baseline2)
+  const newChunks = baseline2.chunks || 0
+
+  // Verify orphaned chunks were removed
+  assert.ok(newChunks < oldChunks, 'New baseline should have fewer chunks')
+
+  // Old chunks beyond newChunks should be removed
+  for (let i = newChunks; i < oldChunks; i++) {
+    const chunk = await storage.get(`b_device-A_${i}`)
+    assert.strictEqual(chunk, undefined, `Orphaned chunk ${i} should be removed`)
+  }
+
+  console.log('✓ L0. Baseline shrinks and removes orphaned chunks passed')
+})
+
+test('L1. GC removes events with chunks', async () => {
+  const storage = new MemoryStorage()
+  const stateA: Record<string, string> = {}
+
+  const engineA = new SyncEngine<Record<string, string>, string>('device-A', storage, {
+    debug: true,
+    baselineThreshold: 3,
+    gcFrequency: 1,
+  })
+
+  engineA.onApplyEvent((event) => {
+    stateA[event.op.type] = event.op.data!
+  })
+
+  engineA.onCreateBaseline(() => stateA)
+  engineA.onApplyBaseline((state) => {
+    Object.assign(stateA, state)
+  })
+
+  await engineA.initialize()
+
+  // Record large string event (will be chunked)
+  const largeString = 'x'.repeat(50 * 1024) // 50KB
+  await engineA.recordEvent('largeEvent1', largeString)
+
+  // Check that chunks were created
+  const events1 = await storage.get('e_device-A_0')
+  assert.ok(events1)
+  assert.strictEqual(events1.length, 1)
+  assert.ok(events1[0].op.chunks! > 1, 'Event should have chunks')
+  const numChunks = events1[0].op.chunks!
+  const fromChunk = events1[0].op.fromChunk ?? 0
+
+  // Verify chunks exist
+  for (let i = 0; i < numChunks; i++) {
+    const chunk = await storage.get(`e_device-A_0_${fromChunk + i}`)
+    assert.ok(chunk !== undefined, `Event chunk ${fromChunk + i} should exist`)
+  }
+
+  // Record more events to trigger baseline and make first event eligible for GC
+  await engineA.recordEvent('event2', 'value2')
+  await engineA.recordEvent('event3', 'value3')
+  await engineA.recordEvent('event4', 'value4') // Triggers baseline
+
+  // Sync to trigger GC (gcFrequency=1)
+  await engineA.sync()
+
+  // First event should be removed by GC (included in baseline)
+  const events2 = await storage.get('e_device-A_0')
+  const hasLargeEvent = events2?.some((e: Event<string>) => e.op.type === 'largeEvent1')
+  assert.strictEqual(hasLargeEvent, false, 'Large event should be removed by GC')
+
+  // Verify chunks were also removed
+  for (let i = 0; i < numChunks; i++) {
+    const chunk = await storage.get(`e_device-A_0_${fromChunk + i}`)
+    assert.strictEqual(chunk, undefined, `Event chunk ${fromChunk + i} should be removed`)
+  }
+
+  console.log('✓ L1. GC removes events with chunks passed')
 })

@@ -5,6 +5,7 @@
 export { SyncEngine } from './SyncEngine.js'
 export { HLC } from './HLC.js'
 export { ShardManager } from './ShardManager.js'
+export { DataSerializer } from './DataSerializer.js'
 
 export { MemoryStorage } from './MemoryStorage.js'
 export { WebExtStorageAdapter } from './WebExtStorageAdapter.js'
@@ -12,7 +13,8 @@ export { WebExtStorageAdapter } from './WebExtStorageAdapter.js'
 export {
   DEFAULT_BASELINE_THRESHOLD,
   DEFAULT_GC_FREQUENCY,
-  MAX_SHARD_SIZE,
+  MAX_KEYVALUE_SIZE,
+  PROTOCOL_VERSION,
 } from './constants.js'
 
 export type {
@@ -32,3 +34,8 @@ export type {
   DeviceState,
   KnownIncrements,
 } from './types.js'
+
+export type {
+  SerializedMetadata,
+  WriteResult,
+} from './DataSerializer.js'

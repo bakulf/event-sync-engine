@@ -5,7 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert'
 import { ShardManager } from '../src/ShardManager.js'
-import { MAX_SHARD_SIZE } from '../src/constants.js'
+import { MAX_KEYVALUE_SIZE } from '../src/constants.js'
 import type { Event } from '../src/types.js'
 
 test('ShardManager - initialization with defaults', () => {
@@ -29,9 +29,9 @@ test('ShardManager - initialization with existing shards', () => {
 test('ShardManager - should not create new shard for small events', () => {
   const manager = new ShardManager()
 
-  const events: Event<{ data: string }>[] = [
-    { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'test', data: { data: 'small' } } },
-    { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'test', data: { data: 'small' } } },
+  const events: Event<any>[] = [
+    { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'test', data: JSON.stringify({ data: 'small' }) } },
+    { increment: 2, hlc_time: 1001, hlc_counter: 0, op: { type: 'test', data: JSON.stringify({ data: 'small' }) } },
   ]
 
   assert.strictEqual(manager.shouldCreateNewShard(events), false, 'Should not create new shard for small events')
@@ -42,10 +42,10 @@ test('ShardManager - should not create new shard for small events', () => {
 test('ShardManager - should create new shard for large events', () => {
   const manager = new ShardManager()
 
-  // Create a large event that exceeds MAX_SHARD_SIZE
-  const largeData = 'x'.repeat(MAX_SHARD_SIZE / 2)
-  const events: Event<{ data: string }>[] = [
-    { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'test', data: { data: largeData } } },
+  // Create a large event that exceeds MAX_KEYVALUE_SIZE
+  const largeData = 'x'.repeat(MAX_KEYVALUE_SIZE / 2)
+  const events: Event<any>[] = [
+    { increment: 1, hlc_time: 1000, hlc_counter: 0, op: { type: 'test', data: JSON.stringify({ data: largeData }) } },
   ]
 
   assert.strictEqual(manager.shouldCreateNewShard(events), true, 'Should create new shard for large events')

@@ -19,10 +19,11 @@ export const DEFAULT_BASELINE_THRESHOLD = 15
 export const DEFAULT_GC_FREQUENCY = 10
 
 /**
- * Maximum size for a shard in bytes (7KB to leave safety margin under 8KB limit)
+ * Maximum size for storage.sync key-value pairs in bytes (7KB to leave safety margin under 8KB limit)
+ * Used for event shards, baseline chunks, and general data serialization
  * @default 7168
  */
-export const MAX_SHARD_SIZE = 7 * 1024
+export const MAX_KEYVALUE_SIZE = 7 * 1024
 
 /**
  * Timeout for inactive devices in milliseconds

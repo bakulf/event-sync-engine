@@ -4,11 +4,13 @@
 
 import { HLC } from './HLC.js'
 import { ShardManager } from './ShardManager.js'
+import { DataSerializer } from './DataSerializer.js'
 import {
   DEFAULT_BASELINE_THRESHOLD,
   DEFAULT_GC_FREQUENCY,
   DEFAULT_INACTIVE_DEVICE_TIMEOUT,
   DEFAULT_REMOVE_INACTIVE_DEVICES,
+  MAX_KEYVALUE_SIZE,
   PROTOCOL_VERSION,
 } from './constants.js'
 import type {
@@ -38,6 +40,7 @@ export class SyncEngine<TState = any, TEventData = any> {
 
   private hlc: HLC
   private shardManager: ShardManager
+  private dataSerializer: DataSerializer
   private deviceState: DeviceState
   private knownIncrements: KnownIncrements = {}
   private lastActivityUpdate: number = 0
@@ -61,6 +64,11 @@ export class SyncEngine<TState = any, TEventData = any> {
 
     this.hlc = new HLC()
     this.shardManager = new ShardManager()
+    this.dataSerializer = new DataSerializer(
+      (items) => this.setWithGCRetry(items),
+      (key) => this.storage.get(key),
+      (keys) => this.storage.remove(keys)
+    )
     this.deviceState = {
       device_id: deviceId,
       last_increment: 0,
@@ -212,9 +220,21 @@ export class SyncEngine<TState = any, TEventData = any> {
       shards: [0],
     }
 
+    const baselineState = this.baselineHandler
+      ? await this.baselineHandler()
+      : ({} as TState)
+
+    const serializedState = JSON.stringify(baselineState)
+    const baselineKey = `b_${this.deviceId}`
+    const writeResult = await this.dataSerializer.write(
+      baselineKey,
+      serializedState
+    )
+
     const baseline: Baseline<TState> = {
       includes: {},
-      state: this.baselineHandler ? await this.baselineHandler() : {} as TState,
+      chunks: writeResult.chunks,
+      state: writeResult.data as any,
     }
 
     const now = Date.now()
@@ -239,7 +259,6 @@ export class SyncEngine<TState = any, TEventData = any> {
   private async bootstrap(allMeta: Record<string, Meta>): Promise<void> {
     this.log('[SyncEngine] Bootstrapping from existing network...')
 
-    // Validate all remote device versions first
     for (const [key, meta] of Object.entries(allMeta)) {
       const deviceId = key.replace('m_', '')
       this.validateProtocolVersion(meta, deviceId)
@@ -260,7 +279,17 @@ export class SyncEngine<TState = any, TEventData = any> {
     if (baselineDevice) {
       baseline = await this.storage.get(`b_${baselineDevice}`)
       if (baseline && this.baselineLoadHandler) {
-        await this.baselineLoadHandler(baseline.state)
+        const baselineKey = `b_${baselineDevice}`
+        const serializedState = await this.dataSerializer.read(
+          baselineKey,
+          {
+            chunks: baseline.chunks,
+            data: baseline.state as any
+          }
+        )
+
+        const state = JSON.parse(serializedState) as TState
+        await this.baselineLoadHandler(state)
       }
     } else {
       this.log('[SyncEngine] No baseline found, will apply all events from scratch')
@@ -278,7 +307,8 @@ export class SyncEngine<TState = any, TEventData = any> {
 
         for (const event of events) {
           if (event.increment > includesIncrement) {
-            allEvents.push({ ...event, deviceId: remoteDeviceId })
+            const reconstructedEvent = await this.reconstructEvent(event, remoteDeviceId, shardIdx)
+            allEvents.push({ ...reconstructedEvent, deviceId: remoteDeviceId })
           }
         }
       }
@@ -313,9 +343,19 @@ export class SyncEngine<TState = any, TEventData = any> {
     }
 
     if (this.baselineHandler) {
+      const baselineState = await this.baselineHandler()
+      const serializedState = JSON.stringify(baselineState)
+
+      const baselineKey = `b_${this.deviceId}`
+      const writeResult = await this.dataSerializer.write(
+        baselineKey,
+        serializedState
+      )
+
       const ourBaseline: Baseline<TState> = {
         includes: { ...this.knownIncrements },
-        state: await this.baselineHandler(),
+        chunks: writeResult.chunks,
+        state: writeResult.data as any,
       }
       items[`b_${this.deviceId}`] = ourBaseline
     }
@@ -332,7 +372,6 @@ export class SyncEngine<TState = any, TEventData = any> {
   private async loadSyncMetadata(meta: Meta): Promise<void> {
     this.log('[SyncEngine] Loading sync metadata...')
 
-    // Validate our own Meta version
     this.validateProtocolVersion(meta, this.deviceId)
 
     this.deviceState.last_increment = meta.last_increment
@@ -353,27 +392,110 @@ export class SyncEngine<TState = any, TEventData = any> {
   }
 
   /**
+   * Check if data needs chunking based on its size
+   */
+  private needsChunking(data: string): boolean {
+    return data.length > MAX_KEYVALUE_SIZE
+  }
+
+  /**
+   * Find next available chunk offset in a shard
+   * Scans existing events and finds the first free chunk slot
+   */
+  private findNextAvailableChunk(events: Event<TEventData>[]): number {
+    if (events.length === 0) return 0
+
+    let maxChunk = -1
+    for (const event of events) {
+      if (event.op.chunks && event.op.fromChunk !== undefined) {
+        const lastChunk = event.op.fromChunk + event.op.chunks - 1
+        if (lastChunk > maxChunk) {
+          maxChunk = lastChunk
+        }
+      }
+    }
+
+    return maxChunk + 1
+  }
+
+  /**
+   * Reconstruct event data if it's chunked
+   */
+  private async reconstructEvent(
+    event: Event<TEventData>,
+    deviceId: string,
+    shardIdx: number
+  ): Promise<Event<TEventData>> {
+    if (event.op.chunks) {
+      const chunkKeyBase = `e_${deviceId}_${shardIdx}`
+      const fromChunk = event.op.fromChunk ?? 0
+
+      const serializedData = await this.dataSerializer.read(chunkKeyBase, {
+        chunks: event.op.chunks,
+        fromChunk,
+      })
+
+      return {
+        ...event,
+        op: {
+          type: event.op.type,
+          data: serializedData as any,
+        },
+      }
+    }
+
+    return event
+  }
+
+  /**
    * Record a new event for synchronization
+   * Data is automatically serialized to JSON
    */
   async recordEvent(type: string, data: TEventData): Promise<void> {
     return this.withLock(async () => {
       const { time, counter } = this.hlc.advance()
-
       const increment = this.deviceState.last_increment + 1
-      const event: Event<TEventData> = {
-        increment,
-        hlc_time: time,
-        hlc_counter: counter,
-        op: { type, data },
-      }
-
-      this.shardManager.validateEventSize(event)
 
       const currentShard = this.shardManager.getCurrentShard()
       const shardKey = `e_${this.deviceId}_${currentShard}`
       const existingEvents: Event<TEventData>[] = (await this.storage.get(shardKey)) || []
 
       const itemsToWrite: Record<string, any> = {}
+      let event: Event<TEventData>
+
+      const serializedData = JSON.stringify(data)
+      if (this.needsChunking(serializedData)) {
+        const fromChunk = this.findNextAvailableChunk(existingEvents)
+        const chunkKeyBase = `e_${this.deviceId}_${currentShard}`
+
+        const writeResult = await this.dataSerializer.write(
+          chunkKeyBase,
+          serializedData,
+          fromChunk
+        )
+
+        event = {
+          increment,
+          hlc_time: time,
+          hlc_counter: counter,
+          op: {
+            type,
+            chunks: writeResult.chunks,
+            fromChunk: writeResult.fromChunk,
+          },
+        }
+
+        this.log(`[SyncEngine] Event chunked: ${writeResult.chunks} chunks from ${writeResult.fromChunk}`)
+      } else {
+        event = {
+          increment,
+          hlc_time: time,
+          hlc_counter: counter,
+          op: { type, data: serializedData as any },
+        }
+      }
+
+      this.shardManager.validateEventSize(event)
 
       if (existingEvents.length > 0 && this.shardManager.shouldCreateNewShard([...existingEvents, event])) {
         const newShard = this.shardManager.createNewShard()
@@ -426,7 +548,6 @@ export class SyncEngine<TState = any, TEventData = any> {
 
         if (remoteDeviceId === this.deviceId) continue
 
-        // Validate version when discovering new devices
         if (!(remoteDeviceId in this.knownIncrements)) {
           this.validateProtocolVersion(meta, remoteDeviceId)
           this.knownIncrements[remoteDeviceId] = 0
@@ -444,7 +565,8 @@ export class SyncEngine<TState = any, TEventData = any> {
 
             for (const event of events) {
               if (event.increment > knownIncrement) {
-                allEvents.push({ ...event, deviceId: remoteDeviceId })
+                const reconstructedEvent = await this.reconstructEvent(event, remoteDeviceId, shardIdx)
+                allEvents.push({ ...reconstructedEvent, deviceId: remoteDeviceId })
               }
             }
           }
@@ -500,7 +622,6 @@ export class SyncEngine<TState = any, TEventData = any> {
    * Useful for inspecting devices, events, and sync status
    */
   async getDebugInfo(): Promise<DebugInfo> {
-    // Get all metadata
     const allMeta = await this.storage.getAll('^m_')
     const allBaselines = await this.storage.getAll('^b_')
 
@@ -570,7 +691,15 @@ export class SyncEngine<TState = any, TEventData = any> {
   private async applyEvent(event: Event<TEventData>): Promise<void> {
     if (!this.eventHandler) return
 
-    await this.eventHandler(event)
+    const deserializedEvent = {
+      ...event,
+      op: {
+        ...event.op,
+        data: event.op.data ? JSON.parse(event.op.data as any) : undefined
+      }
+    }
+
+    await this.eventHandler(deserializedEvent as Event<TEventData>)
   }
 
   /**
@@ -579,17 +708,41 @@ export class SyncEngine<TState = any, TEventData = any> {
   private async updateBaseline(): Promise<void> {
     if (!this.baselineHandler) return
 
+    const baselineKey = `b_${this.deviceId}`
+    const oldBaseline = await this.storage.get(baselineKey) as Baseline<TState> | undefined
+    const oldChunks = oldBaseline?.chunks || 0
+
+    const baselineState = await this.baselineHandler()
+    const serializedState = JSON.stringify(baselineState)
+
+    const writeResult = await this.dataSerializer.write(
+      baselineKey,
+      serializedState
+    )
+
     const baseline: Baseline<TState> = {
       includes: {
         [this.deviceId]: this.deviceState.last_increment,
         ...this.knownIncrements,
       },
-      state: await this.baselineHandler(),
+      chunks: writeResult.chunks,
+      state: writeResult.data as any,
     }
 
     await this.setWithGCRetry({
-      [`b_${this.deviceId}`]: baseline,
+      [baselineKey]: baseline,
     })
+
+    const newChunks = writeResult.chunks || 0
+    if (oldChunks > newChunks) {
+      const orphanedChunks: string[] = []
+      for (let i = newChunks; i < oldChunks; i++) {
+        orphanedChunks.push(`${baselineKey}_${i}`)
+      }
+      await this.storage.remove(orphanedChunks)
+      this.log(`[SyncEngine] Removed ${orphanedChunks.length} orphaned baseline chunks`)
+    }
+
     this.deviceState.events_since_baseline_update = 0
     this.log('[SyncEngine] Baseline updated')
   }
@@ -602,6 +755,7 @@ export class SyncEngine<TState = any, TEventData = any> {
 
     const allMeta = await this.storage.getAll('^m_')
     const allSeen = await this.storage.getAll('^s_')
+    const allBaselines = await this.storage.getAll('^b_')
 
     const now = Date.now()
     const timeout = this.config.inactiveDeviceTimeout
@@ -628,12 +782,33 @@ export class SyncEngine<TState = any, TEventData = any> {
         this.log(`[SyncEngine] Device ${deviceId} inactive for ${Math.floor((now - lastActive) / (24 * 60 * 60 * 1000))} days, removing...`)
 
         keysToRemove.push(`m_${deviceId}`)
-        keysToRemove.push(`b_${deviceId}`)
         keysToRemove.push(`s_${deviceId}`)
+
+        const baselineKey = `b_${deviceId}`
+        const baseline = allBaselines[baselineKey] as Baseline<TState> | undefined
+        if (baseline) {
+          keysToRemove.push(baselineKey)
+          if (baseline.chunks) {
+            for (let i = 0; i < baseline.chunks; i++) {
+              keysToRemove.push(`${baselineKey}_${i}`)
+            }
+          }
+        }
 
         const shards = (meta as Meta).shards || [0]
         for (const shard of shards) {
-          keysToRemove.push(`e_${deviceId}_${shard}`)
+          const shardKey = `e_${deviceId}_${shard}`
+          keysToRemove.push(shardKey)
+
+          const events: Event<TEventData>[] = (await this.storage.get(shardKey)) || []
+          for (const event of events) {
+            if (event.op.chunks) {
+              const fromChunk = event.op.fromChunk ?? 0
+              for (let i = 0; i < event.op.chunks; i++) {
+                keysToRemove.push(`e_${deviceId}_${shard}_${fromChunk + i}`)
+              }
+            }
+          }
         }
 
         delete this.knownIncrements[deviceId]
@@ -702,8 +877,18 @@ export class SyncEngine<TState = any, TEventData = any> {
       const events: Event<TEventData>[] = (await this.storage.get(shardKey)) || []
 
       const remainingEvents = events.filter((event) => event.increment > safeToRemove)
-      const eventsRemoved = events.length - remainingEvents.length
+      const removedEvents = events.filter((event) => event.increment <= safeToRemove)
+      const eventsRemoved = removedEvents.length
       totalEventsRemoved += eventsRemoved
+
+      for (const event of removedEvents) {
+        if (event.op.chunks) {
+          const fromChunk = event.op.fromChunk ?? 0
+          for (let i = 0; i < event.op.chunks; i++) {
+            shardsToDelete.push(`e_${this.deviceId}_${shardIdx}_${fromChunk + i}`)
+          }
+        }
+      }
 
       if (remainingEvents.length === 0) {
         shardsToDelete.push(shardKey)

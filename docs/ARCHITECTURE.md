@@ -114,8 +114,7 @@ Array of events, sharded by sequence number X (0, 1, 2...) to work around 8KB pe
     "hlc_counter": 0,
     "op": {
       "type": "container:create",
-      "id": "container-uuid",
-      "data": {"name": "Work", "color": "blue", "icon": "briefcase"}
+      "data": "{\"name\":\"Work\",\"color\":\"blue\",\"icon\":\"briefcase\"}"
     }
   },
   {
@@ -123,18 +122,37 @@ Array of events, sharded by sequence number X (0, 1, 2...) to work around 8KB pe
     "hlc_time": 1707649200000,
     "hlc_counter": 0,
     "op": {
-      "type": "container:delete",
-      "id": "container-uuid"
+      "type": "document:save",
+      "chunks": 3,
+      "fromChunk": 0
     }
   }
 ]
 ```
 
+**Event Operation Structure:**
+- `type`: Event type identifier (required)
+- `data`: Event payload as JSON string (present if not chunked)
+- `chunks`: Number of chunks (present if data is chunked)
+- `fromChunk`: Starting chunk offset in shard (present if chunked)
+
+**Data Serialization:**
+- All event data is automatically serialized as JSON strings
+- Event handlers receive deserialized objects (automatic JSON.parse)
+- Data >7KB is automatically chunked
+
+**Chunking:**
+- Large events (>7KB) are split into chunks stored as separate keys: `e_<UUID>_<X>_<N>`
+- Multiple chunked events can coexist in the same shard with different `fromChunk` offsets
+- Chunks are transparently reconstructed during sync
+- Example: Event with `chunks: 3, fromChunk: 0` uses chunks `e_device-A_0_0`, `e_device-A_0_1`, `e_device-A_0_2`
+- Next chunked event in same shard with `chunks: 2, fromChunk: 3` uses chunks `e_device-A_0_3`, `e_device-A_0_4`
+
 **Note:** When sorting events from multiple devices, the device ID is extracted from the key name (`e_<UUID>_<X>`) and used for HLC ordering (time, counter, device_id).
 
 #### Baseline Key: `b_<UUID>`
 
-Snapshot of device state with metadata about which events from each device are included in this snapshot.
+Snapshot of device state with metadata about which events from each device are included in this snapshot. All data is automatically serialized as JSON with automatic chunking for large data.
 
 ```json
 {
@@ -143,20 +161,24 @@ Snapshot of device state with metadata about which events from each device are i
     "uuid-device-B": 30,
     "uuid-device-C": 20
   },
-  "containers": {
-    "container-uuid": {
-      "name": "Personal",
-      "color": "red",
-      "icon": "circle"
-    }
-  },
-  "sites": {
-    "container-uuid": ["google.com", "github.com"]
-  }
+  "state": "{\"containers\":{\"container-uuid\":{\"name\":\"Personal\",\"color\":\"red\",\"icon\":\"circle\"}},\"sites\":{\"container-uuid\":[\"google.com\",\"github.com\"]}}"
 }
 ```
 
+**Baseline Structure:**
 - `includes`: Map of device IDs to last increment included in this baseline. When bootstrapping, apply events with `increment > includes[device_id]` for each known device. If a device is not in this map, it's newer than the baseline - apply all its events (`increment > 0`).
+- `state`: Baseline data as JSON string (present if not chunked)
+- `chunks`: Number of chunks (present if data is chunked)
+
+**Data Serialization:**
+- All baseline data is automatically serialized as JSON strings
+- Baseline handlers receive deserialized state objects (automatic JSON.parse)
+- Data >7KB is automatically chunked
+
+**Chunking:**
+- Large baselines are split into chunks stored as: `b_<UUID>_0`, `b_<UUID>_1`, etc.
+- Chunks are transparently reconstructed during bootstrap
+- Garbage collection removes orphaned chunks when baseline shrinks
 
 ### In-Memory State
 
@@ -220,6 +242,220 @@ Each device stores its protocol version in the `Meta` key (`m_<UUID>`):
 
 - The `version` field is **required** - all devices must include it
 - Current protocol version: **1**
+
+---
+
+## Data Serialization and Chunking
+
+### Problem
+
+The `storage.sync` API has an 8KB per-key size limit. This creates challenges:
+1. **Large events**: A single event > 8KB cannot be stored
+2. **Large baselines**: A baseline snapshot > 8KB cannot be stored
+
+### Solution: Automatic JSON Serialization with Chunking
+
+The sync engine automatically handles serialization and chunking:
+
+**Automatic Serialization:**
+- All data is automatically serialized to JSON strings before storage
+- Event handlers receive deserialized data (automatic JSON.parse)
+- Baseline handlers receive deserialized state (automatic JSON.parse)
+- Users work with native JavaScript objects, serialization is transparent
+
+**Chunking Strategy:**
+- If serialized data ≤ 7KB: stored inline (no chunks)
+- If serialized data > 7KB: split into chunks and stored in separate keys
+
+### Data Structure
+
+#### Without Chunking (Small Data)
+
+```json
+{
+  "data": "{\"todos\":{...},\"containers\":{...}}"
+}
+```
+
+#### With Chunking (Large Data)
+
+**Metadata:**
+```json
+{
+  "chunks": 3
+}
+```
+
+**Chunk Keys:**
+```
+key_0: "{\"todos\":{...first 7KB..."
+key_1: "...next 7KB..."
+key_2: "...remaining data...}}"
+```
+
+### Usage Examples
+
+#### Recording Events
+
+```typescript
+// User passes native objects
+await engine.recordEvent('container:create', {
+  name: 'Work',
+  color: 'blue',
+  icon: 'briefcase'
+})
+
+// Engine automatically:
+// 1. JSON.stringify() the data
+// 2. Chunks if needed (>7KB)
+// 3. Stores to storage.sync
+```
+
+#### Receiving Events
+
+```typescript
+// Handler receives deserialized objects
+engine.onApplyEvent((event) => {
+  // event.op.data is already a JavaScript object
+  console.log(event.op.data.name) // "Work"
+  console.log(event.op.data.color) // "blue"
+})
+```
+
+#### Baselines
+
+```typescript
+// Creating baseline - return native object
+engine.onCreateBaseline(() => {
+  return { todos: {...}, containers: {...} }
+})
+
+// Engine automatically:
+// 1. JSON.stringify() the state
+// 2. Chunks if needed (>7KB)
+// 3. Stores to storage.sync
+
+// Loading baseline - receive deserialized object
+engine.onApplyBaseline((state) => {
+  // state is already a JavaScript object
+  appState = state
+  renderApp()
+})
+```
+
+### Chunking Mechanism
+
+**Chunk Naming Pattern:**
+```
+{base_key_name}_{chunk_index}
+```
+
+**Examples:**
+- Baseline: `b_uuid`, `b_uuid_0`, `b_uuid_1`, `b_uuid_2`
+- Event shard: `e_uuid_5`, `e_uuid_5_0`, `e_uuid_5_1`
+
+**Chunk Indexing:**
+- 0-indexed: first chunk is `_0`, second is `_1`, etc.
+- Number of chunks stored in metadata
+
+**Reading:**
+1. Read metadata from base key
+2. If `chunks` field present, read all chunk keys: `{base}_0` to `{base}_{chunks-1}`
+3. Concatenate chunks (strings join, ArrayBuffers merge)
+4. Return reconstructed data
+
+**Writing:**
+1. Check data size
+2. If ≤ 7KB: store inline (no chunks)
+3. If > 7KB:
+   - Split into 7KB chunks
+   - Write to separate keys
+   - Store metadata with `chunks` count
+
+### Event Sharding with Chunking
+
+**Strategy:**
+- Events are stored in arrays per shard: `e_uuid_0`, `e_uuid_1`, etc.
+- When adding an event to a shard would exceed 7KB → create new shard
+- If a **single event** is > 7KB → the entire shard gets chunked
+
+**Important:** You cannot add events to a shard that is already chunked. A chunked shard is "sealed" - create a new shard for additional events.
+
+**Example Flow:**
+
+1. **Normal case** (small events):
+```
+e_uuid_0: [event1, event2, event3]  // 3KB total
+e_uuid_1: [event4, event5]          // 2KB total
+```
+
+2. **Adding event exceeds shard limit** (create new shard):
+```
+e_uuid_0: [event1, event2, event3]  // 6KB total
+// Try to add event4 (2KB) → would exceed 7KB
+e_uuid_1: [event4]                  // New shard created
+```
+
+3. **Single large event** (shard gets chunked):
+```
+// event5 is 20KB
+e_uuid_2: {
+  chunks: 3
+}
+e_uuid_2_0: "first 7KB of event5..."
+e_uuid_2_1: "next 7KB of event5..."
+e_uuid_2_2: "remaining data..."
+```
+
+### Baseline Chunking
+
+**Strategy:**
+- Baseline stored as single key: `b_uuid`
+- If baseline > 7KB → automatically chunked
+
+**Example:**
+
+**Small baseline (no chunking):**
+```json
+b_uuid: {
+  includes: { device-A: 100, device-B: 50 },
+  state: "{\"todos\":{...},\"containers\":{...}}"
+}
+```
+
+**Large baseline (with chunking):**
+```json
+b_uuid: {
+  includes: { device-A: 100, device-B: 50 },
+  chunks: 4
+}
+b_uuid_0: "{\"todos\":{...}, \"con..."
+b_uuid_1: "tainers\":{...}, \"sit..."
+b_uuid_2: "es\":{...}, \"setting..."
+b_uuid_3: "s\":{...}}"
+```
+
+### Garbage Collection
+
+When removing data with chunks, **all associated chunks must be removed**:
+
+1. Read metadata to check for `chunks` field
+2. If chunks present, remove base key + all chunk keys
+3. Chunk keys: `{base}_0` to `{base}_{chunks-1}`
+
+**Example:**
+```typescript
+// Baseline with 3 chunks
+const baseline = await storage.get('b_device-A')
+if (baseline.chunks) {
+  await storage.remove([
+    'b_device-A',      // Metadata
+    'b_device-A_0',    // Chunk 0
+    'b_device-A_1',    // Chunk 1
+    'b_device-A_2'     // Chunk 2
+  ])
+}
+```
 
 ---
 

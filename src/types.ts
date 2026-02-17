@@ -19,10 +19,13 @@ export interface Event<TData = any> {
 
 /**
  * Operation within an event
+ * Note: data is serialized as JSON string internally, but typed as TData for type safety
  */
 export interface Operation<TData = any> {
   type: string
-  data: TData
+  data?: TData         // Present if not chunked (deserialized for handlers, serialized internally)
+  chunks?: number      // Number of chunks (if chunked)
+  fromChunk?: number   // Starting chunk offset in shard (if chunked)
 }
 
 /**
@@ -36,10 +39,12 @@ export interface Meta {
 
 /**
  * Baseline structure (b_<UUID>)
+ * Note: state is serialized as JSON string internally, but typed as TState for type safety
  */
 export interface Baseline<TState = any> {
   includes: Record<string, number>  // device_id -> last_increment
-  state: TState
+  chunks?: number  // Present if state is chunked
+  state?: TState   // Present if not chunked (deserialized for handlers, serialized internally)
 }
 
 /**
@@ -129,15 +134,21 @@ export type EventHandler<TEventData> = (
 
 /**
  * Baseline snapshot callback
+ * Returns baseline data (will be automatically serialized)
  * Can be sync or async
  */
-export type BaselineHandler<TState> = () => TState | Promise<TState>
+export type BaselineHandler<TState> = () =>
+  | TState
+  | Promise<TState>
 
 /**
  * Baseline load callback
+ * Receives deserialized baseline state
  * Can be sync or async
  */
-export type BaselineLoadHandler<TState> = (state: TState) => void | Promise<void>
+export type BaselineLoadHandler<TState> = (
+  state: TState
+) => void | Promise<void>
 
 /**
  * Device state (in-memory, partially persisted to m_<UUID>)

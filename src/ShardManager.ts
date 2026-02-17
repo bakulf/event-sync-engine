@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { MAX_SHARD_SIZE } from './constants.js'
+import { MAX_KEYVALUE_SIZE } from './constants.js'
 import type { Event } from './types.js'
 
 /**
@@ -38,7 +38,7 @@ export class ShardManager {
    */
   shouldCreateNewShard<T>(events: Event<T>[]): boolean {
     const estimatedSize = this.estimateSize(events)
-    return estimatedSize >= MAX_SHARD_SIZE
+    return estimatedSize >= MAX_KEYVALUE_SIZE
   }
 
   /**
@@ -47,8 +47,8 @@ export class ShardManager {
    */
   validateEventSize<T>(event: Event<T>): void {
     const eventSize = this.estimateSize([event])
-    if (eventSize >= MAX_SHARD_SIZE) {
-      throw new Error(`Event size (${eventSize} bytes) exceeds maximum shard size (${MAX_SHARD_SIZE} bytes)`)
+    if (eventSize >= MAX_KEYVALUE_SIZE) {
+      throw new Error(`Event size (${eventSize} bytes) exceeds maximum shard size (${MAX_KEYVALUE_SIZE} bytes)`)
     }
   }
 
@@ -72,7 +72,7 @@ export class ShardManager {
       return json.length * 2
     } catch (e) {
       // If serialization fails, assume it's large
-      return MAX_SHARD_SIZE
+      return MAX_KEYVALUE_SIZE
     }
   }
 }

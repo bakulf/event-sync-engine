@@ -81,9 +81,9 @@ async function initEngine(deviceId) {
     return state
   })
 
-  engine.onApplyBaseline(async (newState) => {
-    console.log('[onApplyBaseline] Loading baseline:', newState)
-    await setState(newState)
+  engine.onApplyBaseline(async (state) => {
+    console.log('[onApplyBaseline] Loading baseline:', state)
+    await setState(state)
     await render()
   })
 

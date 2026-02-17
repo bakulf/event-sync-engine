@@ -11,7 +11,9 @@ This engine enables conflict-free, eventually consistent data synchronization ac
 - **Event Sourcing**: Store changes as immutable events, not state snapshots
 - **HLC Ordering**: Deterministic event ordering despite clock drift
 - **Conflict-Free**: Guaranteed eventual consistency across devices
-- **Garbage Collection**: Baseline-based automatic cleanup of old events
+- **Automatic Serialization**: All data automatically serialized as JSON strings
+- **Automatic Chunking**: Large data (>7KB) automatically split into chunks
+- **Garbage Collection**: Baseline-based automatic cleanup of old events and chunks
 - **Inactive Device Removal**: Optional automatic cleanup of devices inactive for extended periods
 - **Sharding**: Automatic event sharding to respect storage.sync 8KB limit
 - **Concurrency Protection**: Operation-level locking prevents race conditions
@@ -88,33 +90,31 @@ await engine.initialize()
 
 **Important**: Apply the operation to your state BEFORE calling `recordEvent()`.
 
+All data is automatically serialized as JSON and chunked if needed (>7KB):
+
 ```typescript
-// Add a todo
+// Record an event with any serializable data
 const newTodo = {
   id: generateId(),
   title: 'Buy milk',
   completed: false
 }
-// 1. Apply to local state first
 appState.todos[newTodo.id] = newTodo
 renderApp()
-// 2. Record event for sync
 await engine.recordEvent('todo:create', {
   id: newTodo.id,
   title: newTodo.title
 })
 
-// Toggle todo
-const todoId = 'some-id'
-// 1. Apply to local state first
-appState.todos[todoId].completed = !appState.todos[todoId].completed
-renderApp()
-// 2. Record event for sync
-await engine.recordEvent('todo:toggle', {
-  id: todoId,
-  completed: appState.todos[todoId].completed
-})
+// Large data is automatically chunked
+const largeNote = {
+  id: generateId(),
+  content: 'x'.repeat(50 * 1024) // 50KB of text
+}
+await engine.recordEvent('note:create', largeNote)
 ```
+
+**Note**: All data is automatically serialized as JSON strings internally. Data larger than 7KB is automatically chunked to respect storage.sync limits.
 
 ### 4. Sync
 
@@ -143,6 +143,49 @@ await engine.sync()
 1. SyncEngine detects change in storage.sync
 2. SyncEngine calls your `onApplyEvent` handler
 3. Application applies event to its state
+
+### Automatic Serialization and Chunking
+
+All data is automatically serialized as JSON and transparently chunked if needed:
+
+**Serialization**:
+- Event data is automatically serialized to JSON when recorded
+- Event handlers receive deserialized data (parsed objects)
+- Baseline data is automatically serialized when created
+- Baseline handlers receive deserialized state
+
+**Chunking Behavior**:
+- Data >7KB is automatically chunked and stored as multiple storage keys
+- Chunks are transparently reconstructed during sync
+- Multiple chunked events can coexist in the same shard with different offsets
+- Garbage collection automatically removes chunks when events are deleted
+
+**Example**:
+
+```typescript
+// Small event - stored inline
+await engine.recordEvent('user:update', { id: '123', name: 'John' })
+
+// Large event - automatically chunked
+const largeNote = {
+  id: '456',
+  content: 'x'.repeat(50 * 1024) // 50KB
+}
+await engine.recordEvent('note:save', largeNote)
+
+// In your event handler, data is already deserialized
+engine.onApplyEvent((event) => {
+  console.log('Event type:', event.op.type)
+  console.log('Event data:', event.op.data) // Already parsed object
+})
+
+// Baselines work the same way
+engine.onCreateBaseline(() => appState) // Returns state object
+engine.onApplyBaseline((state) => {
+  appState = state // Receives deserialized state object
+  renderApp()
+})
+```
 
 ## Configuration
 

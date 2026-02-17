@@ -15,7 +15,7 @@ function createTodoEvent(increment, hlcTime, hlcCounter, type, id, data = {}) {
     hlc_counter: hlcCounter,
     op: {
       type,
-      data: { id, ...data }
+      data: JSON.stringify({ id, ...data })
     }
   }
 }
@@ -42,7 +42,8 @@ export const scenarios = {
 
       const todos = {}
       events.forEach(e => {
-        todos[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todos[data.id] = { title: data.title, completed: false }
       })
 
       await storage.sync.set({
@@ -54,7 +55,7 @@ export const scenarios = {
         [`e_${deviceId}_0`]: events,
         [`b_${deviceId}`]: {
           includes: { [deviceId]: 20 },
-          state: { todos }
+          state: JSON.stringify({ todos })
         },
         [`s_${deviceId}`]: {
           increments: {},
@@ -104,7 +105,8 @@ export const scenarios = {
 
       const todosInBaseline = {}
       events.slice(0, 10).forEach(e => {
-        todosInBaseline[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosInBaseline[data.id] = { title: data.title, completed: false }
       })
 
       await storage.sync.set({
@@ -116,7 +118,7 @@ export const scenarios = {
         [`e_${deviceId}_0`]: events,
         [`b_${deviceId}`]: {
           includes: { [deviceId]: 10 },
-          state: { todos: todosInBaseline }
+          state: JSON.stringify({ todos: todosInBaseline })
         },
         [`s_${deviceId}`]: {
           increments: {},
@@ -174,8 +176,9 @@ export const scenarios = {
       const allTodos = {}
       deviceEvents.forEach(de => {
         de.events.forEach(e => {
-          allTodos[e.op.data.id] = {
-            title: e.op.data.title,
+          const data = JSON.parse(e.op.data)
+          allTodos[data.id] = {
+            title: data.title,
             completed: false
           }
         })
@@ -199,7 +202,7 @@ export const scenarios = {
         allData[`e_${deviceId}_0`] = events
         allData[`b_${deviceId}`] = {
           includes: { [deviceId]: 5, ...allIncrements },
-          state: { todos: allTodos }
+          state: JSON.stringify({ todos: allTodos })
         }
         allData[`s_${deviceId}`] = {
           increments: allIncrements,
@@ -261,18 +264,22 @@ export const scenarios = {
 
       const todosA = {}
       eventsA.forEach(e => {
-        todosA[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosA[data.id] = { title: data.title, completed: false }
       })
       eventsB.forEach(e => {
-        todosA[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosA[data.id] = { title: data.title, completed: false }
       })
 
       const todosB = {}
       eventsA.slice(0, 5).forEach(e => {
-        todosB[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosB[data.id] = { title: data.title, completed: false }
       })
       eventsB.forEach(e => {
-        todosB[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosB[data.id] = { title: data.title, completed: false }
       })
 
       await storage.sync.set({
@@ -284,7 +291,7 @@ export const scenarios = {
         [`e_${deviceA}_0`]: eventsA,
         [`b_${deviceA}`]: {
           includes: { [deviceA]: 10, [deviceB]: 3 },
-          state: { todos: todosA }
+          state: JSON.stringify({ todos: todosA })
         },
         [`s_${deviceA}`]: {
           increments: { [deviceB]: 3 },
@@ -298,7 +305,7 @@ export const scenarios = {
         [`e_${deviceB}_0`]: eventsB,
         [`b_${deviceB}`]: {
           includes: { [deviceA]: 5, [deviceB]: 3 },
-          state: { todos: todosB }
+          state: JSON.stringify({ todos: todosB })
         },
         [`s_${deviceB}`]: {
           increments: { [deviceA]: 5 },
@@ -382,7 +389,8 @@ export const scenarios = {
 
       const todosInBaseline = {}
       shard0.forEach(e => {
-        todosInBaseline[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosInBaseline[data.id] = { title: data.title, completed: false }
       })
 
       await storage.sync.set({
@@ -396,7 +404,7 @@ export const scenarios = {
         [`e_${deviceId}_2`]: shard2,
         [`b_${deviceId}`]: {
           includes: { [deviceId]: 3 },
-          state: { todos: todosInBaseline }
+          state: JSON.stringify({ todos: todosInBaseline })
         },
         [`s_${deviceId}`]: {
           increments: {},
@@ -462,12 +470,14 @@ export const scenarios = {
 
       const todosActive = {}
       eventsActive.forEach(e => {
-        todosActive[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosActive[data.id] = { title: data.title, completed: false }
       })
 
       const todosOld = {}
       eventsOld.forEach(e => {
-        todosOld[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosOld[data.id] = { title: data.title, completed: false }
       })
 
       await storage.sync.set({
@@ -479,7 +489,7 @@ export const scenarios = {
         [`e_${activeDevice}_0`]: eventsActive,
         [`b_${activeDevice}`]: {
           includes: { [activeDevice]: 5 },
-          state: { todos: todosActive }
+          state: JSON.stringify({ todos: todosActive })
         },
         [`s_${activeDevice}`]: {
           increments: {},
@@ -493,7 +503,7 @@ export const scenarios = {
         [`e_${oldDevice1}_0`]: eventsOld,
         [`b_${oldDevice1}`]: {
           includes: { [oldDevice1]: 3 },
-          state: { todos: todosOld }
+          state: JSON.stringify({ todos: todosOld })
         },
         [`s_${oldDevice1}`]: {
           increments: {},
@@ -507,7 +517,7 @@ export const scenarios = {
         [`e_${oldDevice2}_0`]: eventsOld,
         [`b_${oldDevice2}`]: {
           includes: { [oldDevice2]: 3 },
-          state: { todos: todosOld }
+          state: JSON.stringify({ todos: todosOld })
         },
         [`s_${oldDevice2}`]: {
           increments: {},
@@ -554,18 +564,22 @@ export const scenarios = {
 
       const todosA = {}
       eventsA.forEach(e => {
-        todosA[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosA[data.id] = { title: data.title, completed: false }
       })
       eventsB.forEach(e => {
-        todosA[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosA[data.id] = { title: data.title, completed: false }
       })
 
       const todosB = {}
       eventsA.slice(0, 5).forEach(e => {
-        todosB[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosB[data.id] = { title: data.title, completed: false }
       })
       eventsB.forEach(e => {
-        todosB[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosB[data.id] = { title: data.title, completed: false }
       })
 
       await storage.sync.set({
@@ -577,7 +591,7 @@ export const scenarios = {
         [`e_${deviceA}_0`]: eventsA,
         [`b_${deviceA}`]: {
           includes: { [deviceA]: 15, [deviceB]: 8 },
-          state: { todos: todosA }
+          state: JSON.stringify({ todos: todosA })
         },
         [`s_${deviceA}`]: {
           increments: { [deviceB]: 8 },
@@ -591,7 +605,7 @@ export const scenarios = {
         [`e_${deviceB}_0`]: eventsB,
         [`b_${deviceB}`]: {
           includes: { [deviceA]: 5, [deviceB]: 8 },
-          state: { todos: todosB }
+          state: JSON.stringify({ todos: todosB })
         },
         [`s_${deviceB}`]: {
           increments: { [deviceA]: 5 },
@@ -656,33 +670,36 @@ export const scenarios = {
 
       const todosA = {}
       eventsA.forEach(e => {
-        todosA[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosA[data.id] = { title: data.title, completed: false }
       })
 
       const todosB = {}
       eventsB.forEach(e => {
-        todosB[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosB[data.id] = { title: data.title, completed: false }
       })
 
       const todosC = {}
       eventsC.forEach(e => {
-        todosC[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todosC[data.id] = { title: data.title, completed: false }
       })
 
       await storage.sync.set({
         [`m_${deviceA}`]: { version: 1, last_increment: 3, shards: [0] },
         [`e_${deviceA}_0`]: eventsA,
-        [`b_${deviceA}`]: { includes: { [deviceA]: 3 }, state: { todos: todosA } },
+        [`b_${deviceA}`]: { includes: { [deviceA]: 3 }, state: JSON.stringify({ todos: todosA }) },
         [`s_${deviceA}`]: { increments: {}, lastActive: Date.now() },
 
         [`m_${deviceB}`]: { version: 1, last_increment: 2, shards: [0] },
         [`e_${deviceB}_0`]: eventsB,
-        [`b_${deviceB}`]: { includes: { [deviceB]: 2 }, state: { todos: todosB } },
+        [`b_${deviceB}`]: { includes: { [deviceB]: 2 }, state: JSON.stringify({ todos: todosB }) },
         [`s_${deviceB}`]: { increments: {}, lastActive: Date.now() },
 
         [`m_${deviceC}`]: { version: 1, last_increment: 2, shards: [0] },
         [`e_${deviceC}_0`]: eventsC,
-        [`b_${deviceC}`]: { includes: { [deviceC]: 2 }, state: { todos: todosC } },
+        [`b_${deviceC}`]: { includes: { [deviceC]: 2 }, state: JSON.stringify({ todos: todosC }) },
         [`s_${deviceC}`]: { increments: {}, lastActive: Date.now() }
       })
 
@@ -724,7 +741,8 @@ export const scenarios = {
 
       const todos = {}
       events.forEach(e => {
-        todos[e.op.data.id] = { title: e.op.data.title, completed: false }
+        const data = JSON.parse(e.op.data)
+        todos[data.id] = { title: data.title, completed: false }
       })
 
       await storage.sync.set({
@@ -736,7 +754,7 @@ export const scenarios = {
         [`e_${deviceId}_0`]: events,
         [`b_${deviceId}`]: {
           includes: { [deviceId]: 10 },
-          state: { todos }
+          state: JSON.stringify({ todos })
         },
         [`s_${deviceId}`]: {
           increments: {},
@@ -807,7 +825,7 @@ export const scenarios = {
           }
           allData[`b_${deviceId}`] = {
             includes: { [deviceId]: finalIncrement },
-            state: { todos: todosInBaseline }
+            state: JSON.stringify({ todos: todosInBaseline })
           }
           allData[`s_${deviceId}`] = {
             increments: {},
@@ -845,7 +863,8 @@ export const scenarios = {
       console.log(`[Validate] Storage test: ${todoCount} todos loaded successfully, GC should free storage`)
       return true
     }
-  }
+  },
+
 }
 
 export async function loadScenario(scenarioId) {
